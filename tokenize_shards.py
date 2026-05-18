@@ -24,6 +24,7 @@ import io
 import os
 import glob
 import time
+import math
 
 import numpy as np
 import torch
@@ -35,6 +36,8 @@ from tqdm import tqdm
 from fourm.data import CenterCropImageAugmenter, RandomCropImageAugmenter
 from fourm.data.modality_info import MODALITY_TRANSFORMS_DIVAE
 from fourm.vq.vqvae import DiVAE
+
+from torch.utils.data import DataLoader, IterableDataset
 
 # ---------------------------------------------------------------------------
 # Config
@@ -62,6 +65,51 @@ TASK_CONFIG = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+class ShardDataset(IterableDataset):
+    def __init__(self, samples, task, task_cfg, n_crops, input_size,
+                 center_aug, random_aug, existing_crop_settings):
+        self.samples = samples
+        self.task = task
+        self.task_cfg = task_cfg
+        self.n_crops = n_crops
+        self.input_size = input_size
+        self.center_aug = center_aug
+        self.random_aug = random_aug
+        self.existing_crop_settings = existing_crop_settings
+
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            # single-process, use all samples
+            samples = self.samples
+        else:
+            # split samples across workers
+            per_worker = math.ceil(len(self.samples) / worker_info.num_workers)
+            start = worker_info.id * per_worker
+            end = min(start + per_worker, len(self.samples))
+            samples = self.samples[start:end]
+
+        for sample in samples:
+            key = sample['__key__']
+            try:
+                img = load_image(sample, self.task_cfg)
+            except Exception as e:
+                print(f"Warning: skipping {key}: {e}")
+                continue
+            existing = self.existing_crop_settings.get(key)
+            settings = get_crop_settings(
+                key, img, self.task, self.n_crops, self.input_size,
+                self.center_aug, self.random_aug, existing_settings=existing
+            )
+            imgs = apply_crops(
+                img, self.task, settings, self.input_size,
+                self.task_cfg['resample_mode'], MODALITY_TRANSFORMS_DIVAE
+            )
+            yield key, settings, imgs  # (n_crops, C, H, W)
+    
+    def __len__(self):
+        return len(self.samples)
 
 def load_image(sample, task_cfg):
     """Load a PIL image from a WebDataset sample."""
@@ -225,6 +273,7 @@ def main(args):
         # Collect all samples from this shard
         dataset = wds.WebDataset(tar_path)
         samples = list(dataset)  # load full shard into memory (1k-10k images)
+        print(len(samples))
 
         if args.dryrun:
             for s in samples[:3]:
@@ -235,66 +284,39 @@ def main(args):
         tok_writer = wds.TarWriter(tok_out_path)
         crop_writer = wds.TarWriter(crop_out_path) if not os.path.exists(crop_out_path) else None
 
-        # Process in batches for GPU efficiency
-        batch_imgs = []
-        batch_keys = []
-        batch_settings = []
+        shard_ds = ShardDataset(
+            samples, args.task, task_cfg, args.n_crops,
+            args.input_size, center_aug, random_aug, existing_crop_settings
+        )
+        loader = DataLoader(
+            shard_ds,
+            batch_size=args.batch_size_dataloader,
+            num_workers=4,
+            prefetch_factor=2,
+        )
 
-        def flush_batch():
-            if not batch_imgs:
-                return
-            # Stack all crops across all images: (B*n_crops, C, H, W)
-            imgs_tensor = torch.cat(batch_imgs, dim=0)
-            sub_batches = imgs_tensor.split(args.batch_size, dim=0)
+        n_batches = math.ceil(len(shard_ds) / args.batch_size_dataloader)
+
+        for keys, settings_batch, imgs_batch in tqdm(loader, total=n_batches, desc=f'  {shard_file}', leave=False):
+            # imgs_batch: (B, n_crops, C, H, W)
+            imgs_flat = rearrange(imgs_batch, 'b n c h w -> (b n) c h w')
+            sub_batches = imgs_flat.split(args.batch_size, dim=0)
             all_tokens = np.concatenate([
                 tokenize_batch(model, sb, device) for sb in sub_batches
             ])  # (B*n_crops, n_tokens)
-            all_tokens = rearrange(
-                all_tokens, '(b n) d -> b n d', n=args.n_crops
-            )  # (B, n_crops, n_tokens)
+            all_tokens = rearrange(all_tokens, '(b n) d -> b n d', n=args.n_crops)
 
-            for key, settings, tokens in zip(batch_keys, batch_settings, all_tokens):
+            for key, settings, tokens in zip(keys, settings_batch, all_tokens):
                 tok_writer.write({
                     '__key__': key,
-                    'npy': npy_to_bytes(tokens),  # shape (n_crops, n_tokens)
+                    'npy': npy_to_bytes(tokens),
                 })
                 if crop_writer is not None:
                     crop_writer.write({
                         '__key__': key,
-                        'npy': npy_to_bytes(settings),  # shape (n_crops, 5)
+                        'npy': npy_to_bytes(settings.numpy()),
                     })
-
-            batch_imgs.clear()
-            batch_keys.clear()
-            batch_settings.clear()
-
-        for sample in tqdm(samples, desc=f'  {shard_file}', leave=False):
-            key = sample['__key__']
-            try:
-                img = load_image(sample, task_cfg)
-            except Exception as e:
-                print(f"Warning: skipping {key}: {e}")
-                continue
-
-            existing = existing_crop_settings.get(key)
-            settings = get_crop_settings(
-                key, img, args.task, args.n_crops, args.input_size,
-                center_aug, random_aug, existing_settings=existing
-            )
-
-            imgs = apply_crops(
-                img, args.task, settings, args.input_size,
-                task_cfg['resample_mode'], MODALITY_TRANSFORMS_DIVAE
-            )  # (n_crops, C, H, W)
-
-            batch_imgs.append(imgs)
-            batch_keys.append(key)
-            batch_settings.append(settings)
-
-            if len(batch_keys) >= args.batch_size_dataloader:
-                flush_batch()
-
-        flush_batch()
+        # flush_batch()
 
         tok_writer.close()
         if crop_writer is not None:
@@ -315,9 +337,9 @@ if __name__ == '__main__':
                         help='Number of crops per image (1=center only, >1 adds random crops)')
     parser.add_argument('--min_crop_scale', type=float, default=0.2)
     parser.add_argument('--input_size', type=int, default=224)
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=512,
                         help='GPU batch size for tokenizer inference')
-    parser.add_argument('--batch_size_dataloader', type=int, default=64,
+    parser.add_argument('--batch_size_dataloader', type=int, default=512,
                         help='Number of images to accumulate before flushing to GPU')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--force_retokenize', action='store_true', default=False)

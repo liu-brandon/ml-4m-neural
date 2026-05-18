@@ -19,24 +19,24 @@ dtype: bfloat16
 # tokenizer_path: "fourm/utils/tokenizer/trained/text_tokenizer_4m_wordpiece_30k.json"
 
 # Initialization
-finetune: '/path/to/4M_checkpoint.pth' # Change me. Initialize 4M-21 training from 4M-7 checkpoint
+# finetune: '/path/to/4M_checkpoint.pth' # Change me. Initialize 4M-21 training from 4M-7 checkpoint
 
 # Train
 epochs: -1
-total_tokens: 500 # in billions
+total_tokens: .5 # in billions
 opt: adamw
 blr: 0.0001 # this is base_lr = 1e-4, lr = base_lr * batch_size / 256
 min_blr: 0.
 warmup_epochs: -1
-warmup_tokens: 10 # in billions
+warmup_tokens: .01 # in billions
 batch_size: 64 # 64 x 64 = 4096
 
 # Data
-data_config: "cfgs/default/4m/data/cc12m+coyo+c4/main/mix_mod21_all2allmix_rgb2all_capT5bias_C4.yaml"
-s3_data_endpoint: "/path/to/endpoint" # Change me
+data_config: "cfgs/neural/4m/data/rgb-depth-a0.5.yaml"
+# s3_data_endpoint: "/path/to/endpoint" # Change me
 eval_freq: 1
 fixed_eval: True
-epoch_size: 250_000 # Number of samples per "epoch"
+epoch_size: 100_000 # Number of samples per "epoch"
 
 # Saving
 save_ckpt_freq: 1
