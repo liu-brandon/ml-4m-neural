@@ -840,16 +840,16 @@ class FM(FourM, PyTorchModelHubMixin):
 
 ## Custom
 @register_model
-def fm_neural_3d_3d_gelu(
+def fm_neural_3e_3d_gelu(
         encoder_embeddings: Dict[str, nn.Module],
         decoder_embeddings: Dict[str, nn.Module],
         **kwargs):
     model = FourM(
         encoder_embeddings=encoder_embeddings,
         decoder_embeddings=decoder_embeddings,
-        encoder_depth=3,
-        decoder_depth=3,
-        dim=192,
+        encoder_depth=2,
+        decoder_depth=2,
+        dim=256,
         num_heads=3,
         mlp_ratio=4,
         qkv_bias=True,

@@ -23,7 +23,7 @@ dtype: bfloat16
 
 # Train
 epochs: -1
-total_tokens: .5 # in billions
+total_tokens: 5 # in billions
 opt: adamw
 blr: 0.0001 # this is base_lr = 1e-4, lr = base_lr * batch_size / 256
 min_blr: 0.

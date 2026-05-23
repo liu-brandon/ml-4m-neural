@@ -60,6 +60,14 @@ TASK_CONFIG = {
         'convert':      None,
         'is_npy':       True,
     },
+    'depth-anything': {
+        'hf_id':        'EPFL-VILAB/4M_tokenizers_depth_8k_224-448',
+        'wds_key':      'npy',          # depth is stored as .npy
+        'tok_folder':   'tok_depth@224',
+        'resample_mode':'bilinear',
+        'convert':      None,
+        'is_npy':       True,
+    },
 }
 
 # ---------------------------------------------------------------------------

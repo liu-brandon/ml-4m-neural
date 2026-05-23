@@ -46,7 +46,7 @@ def get_args():
 
     parser = argparse.ArgumentParser('4M pre-training script (using DDP)', add_help=True)
     parser.add_argument('--run_name', type=str, default='auto')
-
+    parser.add_argument('--dist_backend', type=str, default='nccl')
     parser.add_argument('--batch_size', default=256, type=int,
                         help='Batch size per GPU (default: %(default)s). '
                              'Effective batch size is batch_size * accum_iter * # gpus')
@@ -509,11 +509,15 @@ def main(args):
     print("Number of training steps = %d" % num_training_steps_per_epoch)
     print("Number of training examples per epoch = %d" % (batch_size_no_accum * num_training_steps_per_epoch))
 
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=args.find_unused_params)
+    if args.device == 'cpu':
+        model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=args.find_unused_params)
+    else:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=args.find_unused_params)
     model_without_ddp = model.module
 
     optimizer = create_optimizer(args, model_without_ddp)
-    loss_scaler = NativeScaler(enabled=dtype == torch.float16)
+    # loss_scaler = NativeScaler(enabled=dtype == torch.float16)
+    loss_scaler = NativeScaler(enabled=(dtype == torch.float16 and args.device != 'cpu'))
 
     ## LR and WD schedules
     if args.weight_decay_end is None:
@@ -720,7 +724,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
         # See https://muellerzr.github.io/blog/gradient_accumulation.html
         with nullcontext() if update_grad else model.no_sync():
 
-            with torch.cuda.amp.autocast(dtype=dtype, enabled=dtype != torch.float32):
+            # with torch.cuda.amp.autocast(dtype=dtype, enabled=dtype != torch.float32):
+            with torch.amp.autocast(device_type=args.device, dtype=dtype, enabled=args.device != 'cpu'):
                 loss, mod_loss = model(mod_dict, num_encoder_tokens=num_input_tokens, num_decoder_tokens=num_target_tokens, loss_type=loss_type)
 
                 loss_value = loss.item()
@@ -741,7 +746,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             if dtype == torch.float16:
                 loss_scale_value = loss_scaler.state_dict()["scale"]
 
-        torch.cuda.synchronize()
+        if args.device != "cpu":
+            torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(**mod_loss_values)
@@ -790,7 +796,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
     # Gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    torch.cuda.empty_cache()
+    if args.device != "cpu":
+        torch.cuda.empty_cache()
 
     return {'[Epoch] ' + k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -815,7 +822,8 @@ def evaluate(model, data_loader, device, num_input_tokens, num_target_tokens, lo
             if modality in all_domains
         }
 
-        with torch.cuda.amp.autocast(dtype=dtype, enabled=dtype != torch.float32):
+        # with torch.cuda.amp.autocast(dtype=dtype, enabled=dtype != torch.float32):
+        with torch.amp.autocast(device_type=args.device, dtype=dtype, enabled=args.device != 'cpu'):
             loss, mod_loss = model(mod_dict, num_encoder_tokens=num_input_tokens, num_decoder_tokens=num_target_tokens, loss_type=loss_type)
 
             loss_value = loss.item()

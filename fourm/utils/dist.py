@@ -86,9 +86,10 @@ def init_distributed_mode(args):
         return
 
     args.distributed = True
-
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = 'nccl'
+    if args.device != 'cpu':
+        torch.cuda.set_device(args.gpu)
+    if args.dist_backend is None:
+        args.dist_backend = 'nccl'
     print('| distributed init (rank {}): {}, gpu {}'.format(
         args.rank, args.dist_url, args.gpu), flush=True)
     # Set timeout to 1h20 in case some long download of dataset has to happen
