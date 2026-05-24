@@ -794,7 +794,9 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             lr_scheduler.step_update(start_steps + step)
 
     # Gather the stats from all processes
-    metric_logger.synchronize_between_processes()
+    if args.device != "cpu":
+        metric_logger.synchronize_between_processes()
+    
     print("Averaged stats:", metric_logger)
     if args.device != "cpu":
         torch.cuda.empty_cache()
@@ -833,9 +835,10 @@ def evaluate(model, data_loader, device, num_input_tokens, num_target_tokens, lo
         metric_logger.update(**mod_loss_values)
 
     # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Eval averaged stats:", metric_logger)
-    torch.cuda.empty_cache()
+    if device.type != 'cpu':
+        metric_logger.synchronize_between_processes()
+        print("Eval averaged stats:", metric_logger)
+        torch.cuda.empty_cache()
     
     return {prefix + k: meter.global_avg for k, meter in metric_logger.meters.items()}
 

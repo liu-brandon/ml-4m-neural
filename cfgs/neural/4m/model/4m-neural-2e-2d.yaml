@@ -12,7 +12,7 @@ num_target_tokens: 256
 loss_type: mod
 
 # Architecture
-model: fm_neural_3e_3d_gelu
+model: fm_neural_2e_2d_gelu
 patch_size: 16
 input_size: 224
 dtype: bfloat16

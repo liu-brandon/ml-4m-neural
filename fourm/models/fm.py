@@ -32,7 +32,11 @@ from fourm.data.modality_info import MODALITY_INFO
 # Model definitions
 __all__ = [
     # GELU models
-    'fm_neural_3e_3d_gelu'
+    'fm_neural_2e_2d_gelu_128_dim',
+    'fm_neural_2e_2d_gelu_192_dim',
+    'fm_neural_2e_2d_gelu_256_dim',
+    'fm_neural_2e_2d_gelu_320_dim',
+
     'fm_tiny_6e_6d_gelu',
     'fm_small_8e_8d_gelu',
     'fm_base_12e_12d_gelu',
@@ -840,7 +844,45 @@ class FM(FourM, PyTorchModelHubMixin):
 
 ## Custom
 @register_model
-def fm_neural_3e_3d_gelu(
+def fm_neural_2e_2d_gelu_128_dim(
+        encoder_embeddings: Dict[str, nn.Module],
+        decoder_embeddings: Dict[str, nn.Module],
+        **kwargs):
+    model = FourM(
+        encoder_embeddings=encoder_embeddings,
+        decoder_embeddings=decoder_embeddings,
+        encoder_depth=2,
+        decoder_depth=2,
+        dim=128,
+        num_heads=2,
+        mlp_ratio=4,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
+    return model
+
+@register_model
+def fm_neural_2e_2d_gelu_192_dim(
+        encoder_embeddings: Dict[str, nn.Module],
+        decoder_embeddings: Dict[str, nn.Module],
+        **kwargs):
+    model = FourM(
+        encoder_embeddings=encoder_embeddings,
+        decoder_embeddings=decoder_embeddings,
+        encoder_depth=2,
+        decoder_depth=2,
+        dim=192,
+        num_heads=3,
+        mlp_ratio=4,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
+    return model
+
+@register_model
+def fm_neural_2e_2d_gelu_256_dim(
         encoder_embeddings: Dict[str, nn.Module],
         decoder_embeddings: Dict[str, nn.Module],
         **kwargs):
@@ -850,7 +892,26 @@ def fm_neural_3e_3d_gelu(
         encoder_depth=2,
         decoder_depth=2,
         dim=256,
-        num_heads=3,
+        num_heads=4,
+        mlp_ratio=4,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
+    return model
+
+@register_model
+def fm_neural_2e_2d_gelu_320_dim(
+        encoder_embeddings: Dict[str, nn.Module],
+        decoder_embeddings: Dict[str, nn.Module],
+        **kwargs):
+    model = FourM(
+        encoder_embeddings=encoder_embeddings,
+        decoder_embeddings=decoder_embeddings,
+        encoder_depth=2,
+        decoder_depth=2,
+        dim=320,
+        num_heads=5,
         mlp_ratio=4,
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
