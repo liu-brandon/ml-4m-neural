@@ -54,7 +54,7 @@ CONDITION = "rgb_only"  # change to "rgb_neural" for experimental condition
 # ─────────────────────────────────────────────
 # These are your existing yaml configs — sweep will copy and patch them
 
-BASE_MODEL_CFG = "cfgs/neural/4m/model/4m-neural-2e-2d.yaml"
+BASE_MODEL_CFG = "cfgs/neural/4m/model/4m-neural-2e-2d-scaling.yaml"
 # BASE_TRAIN_CFG = "cfgs/neural/4m/training/base_train.yaml"
 BASE_DATA_CFG  = "cfgs/neural/4m/data/rgb_depth-a0.5.yaml"  # swap for rgb_depth_neural.yaml
 
@@ -124,7 +124,7 @@ def launch_training(model_cfg_path, run_dir):
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = "1"
     cmd = [
-        "torchrun", "--nproc_per_node=1", "run_training_4m.py",             # your main training entrypoint
+        "torchrun", "--nproc_per_node=2", "run_training_4m.py",             # your main training entrypoint
         "--config",      str(model_cfg_path)
     ]
     if test_run:
