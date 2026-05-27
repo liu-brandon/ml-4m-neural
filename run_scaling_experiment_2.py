@@ -37,14 +37,16 @@ import numpy as np
 
 # Model size axis: (dim, num_heads) — keep head_dim=64 fixed
 MODEL_CONFIGS = [
-    # {"dim": 128, "num_heads": 2},   # ~7.5M params
-    # {"dim": 192, "num_heads": 3},   # ~11M  params  ← your current model
+    {"dim": 128, "num_heads": 2, "layers": 2},   # ~7.5M params
+    {"dim": 192, "num_heads": 3, "layers": 2},   # ~11M  params  ← your current model
     {"dim": 256, "num_heads": 4, "layers": 2},   # ~16M  params
-    {"dim": 256, "num_heads": 4, "layers": 3},
+    # {"dim": 256, "num_heads": 4, "layers": 3},
+    # {"dim": 512, "num_heads": 4, "layers": 3},
 ]
 
 # Data axis: total tokens seen in billions
-TOKEN_CONFIGS = [7.0]  # B tokens
+TRAIN_TOKEN_CONFIGS = [5.0]
+TOKEN_CONFIGS = [0.5, 2.0, 5.0]  # B tokens
 # TOKEN_CONFIGS = [8]
 
 # Condition: set to "rgb_only" or "rgb_neural"
@@ -69,14 +71,15 @@ RESULTS_FILE     = SWEEP_OUTPUT_DIR / "results.json"
 # 3. CONFIG GENERATION
 # ─────────────────────────────────────────────
 
-def make_run_name(dim, total_tokens, layers):
-    return f"dim{dim}_layers_{layers}_tok{total_tokens}B"
+def make_run_name(dim, layers, total_tokens):
+    return f"dim{dim}_layer{layers}_tok{total_tokens}B" # change this back
+    # return f"dim{dim}_tok{total_tokens}B"
 
 
-def generate_configs(dim, layers, num_heads, total_tokens, test_run):
+def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, test_run):
     """Generate patched yaml configs for a single sweep run."""
-    run_name = make_run_name(dim, total_tokens, layers)
-    run_dir  = SWEEP_OUTPUT_DIR / run_name
+    run_name = make_run_name(dim, layers, total_tokens)
+    run_dir  = sweep_output_dir / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if layers == 3:
@@ -156,35 +159,35 @@ def launch_training(model_cfg_path, run_dir):
 # 5. RESULT COLLECTION
 # ─────────────────────────────────────────────
 
-def count_parameters(dim, num_heads):
-    """
-    Estimate total parameter count for your architecture.
-    Adjust vocab sizes to match your actual tokenizers.
-    """
-    vocab_rgb   = 16384
-    vocab_depth = 8192
-    # vocab_neural = 8192  # uncomment for 3-modality condition
+# def count_parameters(dim, num_heads):
+#     """
+#     Estimate total parameter count for your architecture.
+#     Adjust vocab sizes to match your actual tokenizers.
+#     """
+#     vocab_rgb   = 16384
+#     vocab_depth = 8192
+#     # vocab_neural = 8192  # uncomment for 3-modality condition
 
-    encoder_depth = 2
-    decoder_depth = 2
-    mlp_ratio     = 4
+#     encoder_depth = 2
+#     decoder_depth = 2
+#     mlp_ratio     = 4
 
-    # Embedding parameters (encoder + decoder, with decoder tied in/out)
-    emb_params = (
-        (vocab_rgb   + vocab_depth) * dim * 2   # encoder emb + decoder emb (tied in/out)
-        # + vocab_neural * dim * 2               # add for 3-modality
-    )
+#     # Embedding parameters (encoder + decoder, with decoder tied in/out)
+#     emb_params = (
+#         (vocab_rgb   + vocab_depth) * dim * 2   # encoder emb + decoder emb (tied in/out)
+#         # + vocab_neural * dim * 2               # add for 3-modality
+#     )
 
-    # Transformer block parameters
-    blocks = encoder_depth + decoder_depth
-    attn_params = 4 * dim * dim                  # Q, K, V, O per block
-    ffn_params  = 2 * mlp_ratio * dim * dim      # FFN up + down per block
-    transformer_params = blocks * (attn_params + ffn_params)
+#     # Transformer block parameters
+#     blocks = encoder_depth + decoder_depth
+#     attn_params = 4 * dim * dim                  # Q, K, V, O per block
+#     ffn_params  = 2 * mlp_ratio * dim * dim      # FFN up + down per block
+#     transformer_params = blocks * (attn_params + ffn_params)
 
-    # Misc: norms, mod_emb, proj, mask_token
-    misc_params = dim * 20
+#     # Misc: norms, mod_emb, proj, mask_token
+#     misc_params = dim * 20
 
-    return emb_params + transformer_params + misc_params
+#     return emb_params + transformer_params + misc_params
 
 
 def extract_final_loss(run_dir, test_run=False):
@@ -194,76 +197,102 @@ def extract_final_loss(run_dir, test_run=False):
 
     Returns float loss or None if run didn't complete.
     """
+    log_path = run_dir / "checkpoints" / "log.txt"
+
+    if not log_path.exists():
+        print(f"  No log found at {log_path}")
+        return []
+
+    # Parse the last eval loss line from your log format:
+    # "[Eval (cc12m)]  ... loss: X.XXXX ..."
+    losses = [] # each a dict of (rgb loss, depth loss, tokens seen)
+    with open(log_path) as f:
+        for line in f:
+            data = json.loads(line)
+            result = {
+                "total_tokens_seen_b": data.get("total_tokens_seen_b"),
+            }
+            
+            # Extract all Fixed Eval tok_rgb@224_loss and tok_depth@224_loss
+            for key, value in data.items():
+                if "Fixed Eval" in key and ("tok_rgb@224_loss" in key or "tok_depth@224_loss" in key):
+                    result[key] = value
+            losses.append(result)
+    
+
+    if len(losses) == 0:
+        print(f"  Could not parse loss from {log_path}")
+
+    return losses
+
+def extract_model_size(run_dir, test_run):
+    if test_run:
+        run_dir = run_dir / "test_run"
     log_path = run_dir / "train.log"
+    
 
     if not log_path.exists():
         print(f"  No log found at {log_path}")
         return None
-
-    # Parse the last eval loss line from your log format:
-    # "[Eval (cc12m)]  ... loss: X.XXXX ..."
-    final_loss = None
+    
     with open(log_path) as f:
         for line in f:
-            if test_run and "Averaged stats:" in line:
-                parts = line.split("loss:")
-                loss_str = parts[1].strip().split()[1]  # (X.XXXX)
-                loss_str = loss_str.strip("()")
-                final_loss = float(loss_str)
-            if "[Eval" in line and "loss:" in line and "eta: 0:00:00" in line:
-                try:
-                    # Pull the running average loss (parenthesized value)
-                    parts = line.split("loss:")
-                    loss_str = parts[1].strip().split()[1]  # (X.XXXX)
-                    loss_str = loss_str.strip("()")
-                    final_loss = float(loss_str)
-                except (IndexError, ValueError):
-                    continue
+            if "Number of params:" in line:
+                return float(line.split(": ")[1].split(" ")[0]) * 1e6
 
-    if final_loss is None:
-        print(f"  Could not parse loss from {log_path}")
-
-    return final_loss
-
-
-def collect_results(test_run=False):
+def collect_results(results_file, sweep_output_dir, model_configs, token_configs, test_run=False):
     """Collect (N, D, loss) from all completed runs."""
     results = []
 
-    for model_cfg in MODEL_CONFIGS:
+    for model_cfg in model_configs:
         dim       = model_cfg["dim"]
         num_heads = model_cfg["num_heads"]
-        layers = model_cfg["layers"]
-        N         = count_parameters(dim, num_heads)
+        # N         = count_parameters(dim, num_heads)
+        layers    = model_cfg["layers"]
 
-        for total_tokens in TOKEN_CONFIGS:
+        for total_tokens in token_configs:
             run_name = make_run_name(dim, layers, total_tokens)
-            run_dir  = SWEEP_OUTPUT_DIR / run_name
+            run_dir  = sweep_output_dir / run_name
             if test_run:
                 run_dir = run_dir / "test_run"
 
-            D    = int(total_tokens * 1e9)   # convert B tokens → raw count
-            loss = extract_final_loss(run_dir, test_run)
+            # D    = int(total_tokens * 1e9)   # convert B tokens → raw count
+            losses = extract_final_loss(run_dir, test_run)
+            N = extract_model_size(run_dir, test_run)
 
-            if loss is not None:
-                results.append({
-                    "run":          run_name,
-                    "dim":          dim,
-                    "N":            N,
-                    "total_tokens": total_tokens,
-                    "D":            D,
-                    "loss":         loss,
-                })
-                print(f"  {run_name}: N={N:,}  D={D:,}  loss={loss:.4f}")
+            if len(losses) > 0:
+                indices = set([
+                    len(losses) // 3,
+                    2 * len(losses) // 3,
+                    len(losses) - 1,
+                ])
+                for i, loss in enumerate(losses):
+                    if i not in indices:
+                        continue
+                    total_tokens_seen = loss["total_tokens_seen_b"]
+                    if total_tokens_seen < 1.0:
+                        continue
+
+                    results.append({
+                        "run":          run_name,
+                        "dim":          dim,
+                        "N":            N,
+                        "layers":       layers,
+                        "total_tokens": loss["total_tokens_seen_b"],
+                        "D":            loss["total_tokens_seen_b"] * 1e9,
+                        "loss_rgb":     loss["[Fixed Eval (cc12m)] tok_rgb@224_loss"],
+                        "loss_depth":   loss["[Fixed Eval (cc12m)] tok_depth@224_loss"]
+                    })
+                # print(f"  {run_name}: N={N:,}  D={D:,}  losses={losses:}")
             else:
                 print(f"  {run_name}: INCOMPLETE — skipping")
 
     # Save results
-    SWEEP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(RESULTS_FILE, "w") as f:
+    sweep_output_dir.mkdir(parents=True, exist_ok=True)
+    with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\nSaved {len(results)} results to {RESULTS_FILE}")
+    print(f"\nSaved {len(results)} results to {results_file}")
     return results
 
 
@@ -271,7 +300,7 @@ def collect_results(test_run=False):
 # 6. SCALING LAW FIT
 # ─────────────────────────────────────────────
 
-def fit_scaling_law(results):
+def fit_scaling_law(results, sweep_output_dir, condition, loss_type="rgb"):
     """
     Fit L(N, D) = E + A/N^alpha + B/D^beta using the chinchilla package.
  
@@ -300,8 +329,14 @@ def fit_scaling_law(results):
     # Use total_tokens * 1e9 / tokens_per_sample as effective sample count
     # If you don't know tokens_per_sample exactly, use raw token count — 
     # it shifts B but not beta, which is what you care about comparatively
+    if loss_type == "rgb":
+        loss_key = "loss_rgb"
+    elif loss_type == "depth":
+        loss_key = "loss_depth"
+    else:
+        raise RuntimeError(f"Bad loss type: {loss_type}")
     D_values    = [r["D"]    for r in results]  # already in raw tokens from collect_results
-    loss_values = [r["loss"] for r in results]
+    loss_values = [r[loss_key] for r in results]
  
     print(f"  N range:    {min(N_values):,} – {max(N_values):,}")
     print(f"  D range:    {min(D_values):,.0f} – {max(D_values):,.0f}")
@@ -310,17 +345,17 @@ def fit_scaling_law(results):
     # Initialize Chinchilla — no seed_ranges needed since we're only fitting,
     # not using it to suggest next runs
     cc = Chinchilla(
-        project_dir=str(SWEEP_OUTPUT_DIR / "chinchilla_db"),
+        project_dir=str(sweep_output_dir / f"chinchilla_db_{loss_type}"),
  
         param_grid=dict(
             # E: irreducible loss floor — set below your best observed loss
             # Your epoch 27 loss was ~8.0, still improving, so floor ~5-7
-            E=np.linspace(5.0, 7.5, 5),
+            E=np.linspace(6.0, 9, 5),
  
             # A, B: penalty coefficients — scale with your loss magnitude (~8-9)
             # With N~11M and alpha~0.2: A/N^0.2 ~ A/27, so A~hundreds to be meaningful
-            A=np.linspace(100, 2000, 5),
-            B=np.linspace(100, 2000, 5),
+            A=np.linspace(100, 2200, 5),
+            B=np.linspace(100, 2200, 5),
  
             # alpha, beta: scaling exponents
             # Vision tends lower than language (Chinchilla found ~0.34 for text)
@@ -333,7 +368,7 @@ def fit_scaling_law(results):
     # Load all results into chinchilla's database
     # append() signature from source: cc.append(N=N, D=D, loss=loss)
     for r in results:
-        cc.append(N=r["N"], D=r["D"], loss=r["loss"])
+        cc.append(N=r["N"], D=r["D"], loss=r[loss_key])
  
     print(f"\nLoaded {len(results)} data points into chinchilla database")
  
@@ -347,9 +382,9 @@ def fit_scaling_law(results):
     # Save fitted params manually as well
     try:
         params = cc.get_params()
-        params["condition"] = CONDITION
+        params["condition"] = condition
         params["n_points"]  = len(results)
-        fit_path = SWEEP_OUTPUT_DIR / "scaling_law_fit.json"
+        fit_path = sweep_output_dir / "scaling_law_fit.json"
         with open(fit_path, "w") as f:
             json.dump(params, f, indent=2)
         print(f"\nFit saved to {fit_path}")
@@ -365,7 +400,7 @@ def fit_scaling_law(results):
 # 7. PLOTTING
 # ─────────────────────────────────────────────
 
-def plot_results(results, law=None):
+def plot_results(results, sweep_output_dir, model_configs, condition, law=None, loss_type="rgb"):
     """Basic loss curve plots for qualitative scaling observations."""
     try:
         import matplotlib.pyplot as plt
@@ -375,20 +410,26 @@ def plot_results(results, law=None):
         return
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle(f"Scaling Laws — {CONDITION}")
+    fig.suptitle(f"Scaling Laws — {condition}")
 
     colors = ["#2196F3", "#FF5722", "#4CAF50"]
 
     # Left: loss vs D (tokens), one line per model size
     ax = axes[0]
-    for i, model_cfg in enumerate(MODEL_CONFIGS):
+    for i, model_cfg in enumerate(model_configs):
         dim = model_cfg["dim"]
-        pts = [(r["D"], r["loss"]) for r in results if r["dim"] == dim]
+        layers = model_cfg["layers"]
+        pts = [(r["D"], r[f"loss_{loss_type}"]) for r in results if r["dim"] == dim]
+        for r in results:
+            if r["dim"] == dim and r["layers"] == layers:
+                N = r["N"]
+                break
+
         if not pts:
             continue
         pts.sort()
         D_pts, L_pts = zip(*pts)
-        N = count_parameters(dim, model_cfg["num_heads"])
+        # N = count_parameters(dim, model_cfg["num_heads"])
         ax.plot(D_pts, L_pts, "o-", color=colors[i], label=f"dim={dim} (N≈{N/1e6:.1f}M)")
 
     ax.set_xlabel("Tokens seen (D)")
@@ -403,7 +444,7 @@ def plot_results(results, law=None):
     token_colors = ["#9C27B0", "#00BCD4", "#FF9800"]
     for i, total_tokens in enumerate(TOKEN_CONFIGS):
         pts = [
-            (count_parameters(r["dim"], MODEL_CONFIGS[[m["dim"] for m in MODEL_CONFIGS].index(r["dim"])]["num_heads"]),
+            (r["model_size"],
              r["loss"])
             for r in results if r["total_tokens"] == total_tokens
         ]
@@ -421,7 +462,7 @@ def plot_results(results, law=None):
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plot_path = SWEEP_OUTPUT_DIR / "scaling_curves.png"
+    plot_path = sweep_output_dir / "scaling_curves.png"
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
     print(f"Plot saved to {plot_path}")
     plt.show()
@@ -431,46 +472,46 @@ def plot_results(results, law=None):
 # 8. MAIN
 # ─────────────────────────────────────────────
 
-def run_sweep(test_run=False):
+def run_sweep(model_configs, train_token_configs, sweep_output_dir, condition, test_run=False):
     """Launch all training runs sequentially."""
-    print(f"Starting sweep: {len(MODEL_CONFIGS)} model sizes x {len(TOKEN_CONFIGS)} token counts")
-    print(f"Condition: {CONDITION}\n")
+    print(f"Starting sweep: {len(model_configs)} model sizes x {len(train_token_configs)} token counts")
+    print(f"Condition: {condition}\n")
 
-    for model_cfg in MODEL_CONFIGS:
-        for total_tokens in TOKEN_CONFIGS:
+    for model_cfg in model_configs:
+        for total_tokens in train_token_configs:
             dim       = model_cfg["dim"]
             num_heads = model_cfg["num_heads"]
             layers = model_cfg["layers"]
-            run_name  = make_run_name(dim, total_tokens, layers)
+            run_name  = make_run_name(dim, layers, total_tokens)
 
             print(f"\n{'='*50}")
             print(f"Run: {run_name}  (dim={dim}, {total_tokens}B tokens)")
             print(f"{'='*50}")
 
             model_cfg_path, run_dir = generate_configs(
-                dim, layers, num_heads, total_tokens, test_run
+                dim, layers, num_heads, total_tokens, sweep_output_dir, test_run
             )
             launch_training(model_cfg_path, run_dir)
 
     print("\nSweep complete. Run with --mode fit to analyze results.")
 
 
-def run_fit(test_run=False):
+def run_fit(results_file, sweep_output_dir, condition, test_run=False, loss_type="rgb"):
     """Collect results and fit scaling law."""
-    if not RESULTS_FILE.exists():
-        print("Collecting results from training logs...")
-        results = collect_results(test_run)
-    else:
-        print(f"Loading existing results from {RESULTS_FILE}")
-        with open(RESULTS_FILE) as f:
-            results = json.load(f)
+    # if not results_file.exists():
+    #     print("Collecting results from training logs...")
+    #     results = collect_results(test_run)
+    # else:
+    print(f"Loading existing results from {results_file}")
+    with open(results_file) as f:
+        results = json.load(f)
 
     if not results:
-        print("No results found. Run sweep first.")
+        print("No results found. Run sweep first, then collect, then fit.")
         return
 
-    law = fit_scaling_law(results)
-    plot_results(results, law)
+    law = fit_scaling_law(results, sweep_output_dir, condition, loss_type)
+    plot_results(results, law, loss_type)
 
 
 if __name__ == "__main__":
@@ -485,14 +526,17 @@ if __name__ == "__main__":
         "--test_run",
         default=False
     )
+    parser.add_argument("--loss_type", choices=["rgb", "depth"], type=str, default="rgb")
     args = parser.parse_args()
     test_run = args.test_run
+    loss_type = args.loss_type
     if args.mode == "sweep":
-        run_sweep(test_run)
+        run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run)
     elif args.mode == "fit":
-        run_fit(test_run)
+        run_fit(RESULTS_FILE, SWEEP_OUTPUT_DIR, CONDITION, test_run, loss_type)
     elif args.mode == "collect":
-        collect_results()
+        collect_results(RESULTS_FILE, SWEEP_OUTPUT_DIR, MODEL_CONFIGS, TOKEN_CONFIGS, test_run)
     elif args.mode == "all":
-        run_sweep()
-        run_fit()
+        run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run)
+        collect_results(RESULTS_FILE, SWEEP_OUTPUT_DIR, MODEL_CONFIGS, TOKEN_CONFIGS, test_run)
+        run_fit(RESULTS_FILE, test_run, loss_type)
