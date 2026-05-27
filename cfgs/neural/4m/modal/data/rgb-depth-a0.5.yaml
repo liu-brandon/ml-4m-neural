@@ -13,7 +13,7 @@ train:
       target_alphas: null
       # Path to specific alphas configuration to enable mixture of Dirichlets. 
       # If provided, overrides input_alphas and target_alphas
-      alphas_config: "cfgs/neural/4m/modal/alphas_mixture/mix_mod7_all2all_rgb2all_a0.5.yaml"
+      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb2depth-all2all-no-neural.yaml"
 
       # Optionally, min_input_tokens, min_target_tokens, num_input_tokens, num_target_tokens can be specified here
       # If so, they will override the values provided in the main config
@@ -46,7 +46,7 @@ train:
       input_alphas: null
       target_alphas: null
 
-      alphas_config: "cfgs/neural/4m/alphas_mixture/mix_mod7_all2all_rgb2all_a0.5.yaml"
+      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/alphas_mixture/mix_mod7_all2all_rgb2all_a0.5.yaml"
 
       data_path: '/project/data/train/things/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00000..00026}.tar' 
       use_wds: True # Use webdataset
@@ -58,10 +58,10 @@ train:
       aligned_captions: False # Align captions to crop_settings
       tok_train_aug: False # Apply data augmentation to tokens (if multiple crop settings are available)
       
-  weights: [1.0] # Sampling weights for the training datasets
+  weights: [1.0, 1.0] # Sampling weights for the training datasets
   
 val:
   datasets:
     cc12m:
       use_wds: False
-      data_path: '/scratch/users/liubr/neural-image-foundation-data/data/val/cc12m'
+      data_path: '/project/data/val/cc12m'

@@ -11,3 +11,6 @@ wandb/
 tokenizer_ckpts/
 *pkl
 *.egg-info
+
+**/*.out
+**/run_*.sh

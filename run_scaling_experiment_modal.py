@@ -38,6 +38,7 @@ image = (
     .add_local_dir(
         ".",  # local fourm repo root
         remote_path="/app/ml-4m",
+        ignore=
     )
     .run_commands(
         "pip install -e /app/ml-4m"  # installs your fourm package

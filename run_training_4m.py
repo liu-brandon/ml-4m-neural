@@ -152,7 +152,7 @@ def get_args():
     parser.add_argument('--s3_max_io_queue', default=100, type=int)
 
     # Text tokenizer
-    parser.add_argument('--text_tokenizer_path', default='fourm/utils/tokenizer/trained/text_tokenizer_4m_wordpiece_30k.json',
+    parser.add_argument('--text_tokenizer_path', default='/opt/repo/ml-4m/fourm/utils/tokenizer/trained/text_tokenizer_4m_wordpiece_30k.json',
                         help="Path to trained text tokenizer")
 
     # Eval

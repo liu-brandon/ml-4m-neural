@@ -36,17 +36,25 @@ import numpy as np
 # ─────────────────────────────────────────────
 
 # Model size axis: (dim, num_heads) — keep head_dim=64 fixed
+# MODEL_CONFIGS = [
+#     {"dim": 128, "num_heads": 2, "layers": 2},   # ~7.5M params
+#     {"dim": 192, "num_heads": 3, "layers": 2},   # ~11M  params
+#     {"dim": 256, "num_heads": 4, "layers": 2},   # ~16M  params
+#     # {"dim": 256, "num_heads": 4, "layers": 3},
+#     # {"dim": 512, "num_heads": 4, "layers": 3}, # 48 million params
+# ]
 MODEL_CONFIGS = [
-    {"dim": 128, "num_heads": 2, "layers": 2},   # ~7.5M params
-    {"dim": 192, "num_heads": 3, "layers": 2},   # ~11M  params  ← your current model
-    {"dim": 256, "num_heads": 4, "layers": 2},   # ~16M  params
-    # {"dim": 256, "num_heads": 4, "layers": 3},
-    # {"dim": 512, "num_heads": 4, "layers": 3},
+    {"dim": 512, "num_heads": 8, "layers": 3},
+    {"dim": 256, "num_heads": 4, "layers": 3},
+    {"dim": 192, "num_heads": 3, "layers": 2},
+    {"dim": 128, "num_heads": 2, "layers": 2},
+    # {"dim": 256, "num_heads": 4, "layers": 2},
 ]
 
 # Data axis: total tokens seen in billions
 TRAIN_TOKEN_CONFIGS = [5.0]
-TOKEN_CONFIGS = [0.5, 2.0, 5.0]  # B tokens
+# TOKEN_CONFIGS = [0.5, 2.0, 5.0]  # B tokens
+TOKEN_CONFIGS = [5.0]
 # TOKEN_CONFIGS = [8]
 
 # Condition: set to "rgb_only" or "rgb_neural"
@@ -58,12 +66,13 @@ CONDITION = "rgb_only"  # change to "rgb_neural" for experimental condition
 # ─────────────────────────────────────────────
 # These are your existing yaml configs — sweep will copy and patch them
 
-BASE_MODEL_CFG = "cfgs/neural/4m/model/4m-neural-2e-2d-scaling.yaml"
-BASE_MODEL_CFG_3_LAYERS = "cfgs/neural/4m/model/4m-neural-3e-3d-scaling.yaml"
+BASE_MODEL_CFG = "/opt/repo/ml-4m/cfgs/neural/4m/modal/model/4m-neural-2e-2d-scaling.yaml"
+BASE_MODEL_CFG_3_LAYERS = "/opt/repo/ml-4m/cfgs/neural/4m/modal/model/4m-neural-3e-3d-scaling.yaml"
 # BASE_TRAIN_CFG = "cfgs/neural/4m/training/base_train.yaml"
-BASE_DATA_CFG  = "cfgs/neural/4m/data/rgb_depth-a0.5.yaml"  # swap for rgb_depth_neural.yaml
+BASE_DATA_CFG  = "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-a0.5.yaml"  # swap for rgb-depth-neural.yaml
 
-SWEEP_OUTPUT_DIR = Path(f"/scratch/users/liubr/neural-image-foundation-data/scaling_sweep/{CONDITION}")
+# SWEEP_OUTPUT_DIR = Path(f"/scratch/users/liubr/neural-image-foundation-data/scaling_sweep/{CONDITION}")
+SWEEP_OUTPUT_DIR = Path("/project/data/scaling_sweep")
 RESULTS_FILE     = SWEEP_OUTPUT_DIR / "results.json"
 
 
@@ -135,7 +144,7 @@ def launch_training(model_cfg_path, run_dir):
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = "1"
     cmd = [
-        "torchrun", "--nproc_per_node=2", "run_training_4m.py",             # your main training entrypoint
+        "torchrun", "--nproc_per_node=1", "/opt/repo/ml-4m/run_training_4m.py",             # your main training entrypoint
         "--config",      str(model_cfg_path)
     ]
     if test_run:
@@ -226,8 +235,6 @@ def extract_final_loss(run_dir, test_run=False):
     return losses
 
 def extract_model_size(run_dir, test_run):
-    if test_run:
-        run_dir = run_dir / "test_run"
     log_path = run_dir / "train.log"
     
 
@@ -444,8 +451,8 @@ def plot_results(results, sweep_output_dir, model_configs, condition, law=None, 
     token_colors = ["#9C27B0", "#00BCD4", "#FF9800"]
     for i, total_tokens in enumerate(TOKEN_CONFIGS):
         pts = [
-            (r["model_size"],
-             r["loss"])
+            (r["N"],
+             r[f"loss_{loss_type}"])
             for r in results if r["total_tokens"] == total_tokens
         ]
         if not pts:
@@ -511,7 +518,7 @@ def run_fit(results_file, sweep_output_dir, condition, test_run=False, loss_type
         return
 
     law = fit_scaling_law(results, sweep_output_dir, condition, loss_type)
-    plot_results(results, law, loss_type)
+    plot_results(results, sweep_output_dir, MODEL_CONFIGS, condition, law, loss_type)
 
 
 if __name__ == "__main__":
@@ -524,6 +531,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--test_run",
+        action="store_true",
         default=False
     )
     parser.add_argument("--loss_type", choices=["rgb", "depth"], type=str, default="rgb")
@@ -539,4 +547,4 @@ if __name__ == "__main__":
     elif args.mode == "all":
         run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run)
         collect_results(RESULTS_FILE, SWEEP_OUTPUT_DIR, MODEL_CONFIGS, TOKEN_CONFIGS, test_run)
-        run_fit(RESULTS_FILE, test_run, loss_type)
+        run_fit(RESULTS_FILE, SWEEP_OUTPUT_DIR, CONDITION, test_run, loss_type)
