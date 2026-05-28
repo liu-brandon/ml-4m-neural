@@ -21,6 +21,7 @@ Usage:
 """
 
 import os
+import sys
 import json
 import yaml
 import argparse
@@ -144,14 +145,13 @@ def launch_training(model_cfg_path, run_dir):
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = "1"
     cmd = [
-        "torchrun", "--nproc_per_node=1", "/opt/repo/ml-4m/run_training_4m.py",             # your main training entrypoint
-        "--config",      str(model_cfg_path)
+        sys.executable,
+        "/opt/repo/4m_training/lib/train_4m.py",
+        "train",
+        "--config", str(model_cfg_path),
     ]
     if test_run:
-        cmd.extend([
-            "--device", "cpu",
-            "--dist_backend", "gloo"
-        ])
+        cmd.extend(["--", "--device", "cpu", "--dist_backend", "gloo"])
 
     print(f"Launching: {' '.join(cmd)}")
     print(f"Logging to: {log_path}")
