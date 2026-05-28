@@ -48,20 +48,29 @@ train:
 
       alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/alphas_mixture/mix_mod7_all2all_rgb2all_a0.5.yaml"
 
-      data_path: '/project/data/train/things/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00000..00026}.tar' 
+      data_path: '/project/data/train/things/[tok_rgb,tok_depth]/shard_{000..026}.tar'
       use_wds: True # Use webdataset
       wds_n_repeats: 2 # Number of repeats for webdataset loader to improve efficiency
       wds_shuffle_buffer_tar: 1_000 # Webdatasets shuffle buffer after loading tar files
       wds_shuffle_buffer_repeat: 1_000 # Webdatasets shuffle buffer after repeating samples
-      
+
       main_augment_domain: rgb@224 # Select from which modality to get the original full image size (mostly important for resizing bounding boxes)
       aligned_captions: False # Align captions to crop_settings
       tok_train_aug: False # Apply data augmentation to tokens (if multiple crop settings are available)
+      modality_name_map:
+        tok_rgb: tok_rgb@224
+        tok_depth: tok_depth@224
       
-  weights: [1.0, 1.0] # Sampling weights for the training datasets
+  weights: [9.0, 1.0] # Sampling weights for the training datasets
   
 val:
   datasets:
     cc12m:
-      use_wds: False
-      data_path: '/project/data/val/cc12m'
+      use_wds: True
+      data_path: '/project/data/val/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00055..00059}.tar'
+    things:
+      use_wds: True
+      data_path: '/project/data/val/things/[tok_rgb,tok_depth]/shard_{000..026}.tar'
+      modality_name_map:
+        tok_rgb: tok_rgb@224
+        tok_depth: tok_depth@224

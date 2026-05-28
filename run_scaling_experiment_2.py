@@ -45,9 +45,9 @@ import numpy as np
 #     # {"dim": 512, "num_heads": 4, "layers": 3}, # 48 million params
 # ]
 MODEL_CONFIGS = [
-    {"dim": 512, "num_heads": 8, "layers": 3},
-    {"dim": 256, "num_heads": 4, "layers": 3},
-    {"dim": 192, "num_heads": 3, "layers": 2},
+    # {"dim": 512, "num_heads": 8, "layers": 3},
+    # {"dim": 256, "num_heads": 4, "layers": 3},
+    # {"dim": 192, "num_heads": 3, "layers": 2},
     {"dim": 128, "num_heads": 2, "layers": 2},
     # {"dim": 256, "num_heads": 4, "layers": 2},
 ]
@@ -105,6 +105,11 @@ def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, tes
     # model_cfg["num_heads"] = num_heads
     model_cfg["model"] += f"_{dim}_dim"
 
+    # Per-dim batch size: A100-40GB OOMs on 3-layer dim=512 at bs=512.
+    # dim=256 3-layer fits ~24 GiB at bs=640; dim=512 needs bs=256.
+    if layers == 3:
+        model_cfg["batch_size"] = 640 if dim <= 256 else 256
+
     if test_run:
         run_dir = run_dir / "test_run"
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -154,15 +159,25 @@ def launch_training(model_cfg_path, run_dir):
         cmd.extend(["--", "--device", "cpu", "--dist_backend", "gloo"])
 
     print(f"Launching: {' '.join(cmd)}")
-    print(f"Logging to: {log_path}")
+    print(f"Logging to: {log_path}", flush=True)
 
     with open(log_path, "w") as log_file:
-        result = subprocess.run(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(
+            cmd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            log_file.write(line)
+            log_file.flush()
+        proc.wait()
+    result_returncode = proc.returncode
 
-    if result.returncode != 0:
-        print(f"WARNING: run exited with code {result.returncode}, check {log_path}")
+    if result_returncode != 0:
+        print(f"WARNING: run exited with code {result_returncode}, check {log_path}")
 
-    return result.returncode
+    return result_returncode
 
 # ─────────────────────────────────────────────
 # 5. RESULT COLLECTION
