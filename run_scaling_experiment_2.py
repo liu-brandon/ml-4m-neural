@@ -109,6 +109,26 @@ CONDITION_MODEL_CFGS = {
         "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-rvq0.yaml",
         "shuffle_neural": True,
     },
+    # pixel_meg_avg / pixel_meg_avg_rvq0: trial-averaged MEG arm. Same geometry as pixel_meg
+    # but trained on the trial-averaged signal (1 "trial" on disk), removing trial-noise.
+    "pixel_meg_avg": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-avg.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-avg.yaml",
+    },
+    "pixel_meg_avg_rvq0": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-avg-rvq0.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-avg-rvq0.yaml",
+    },
+    "pixel_meg_avg_shuffled": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-avg.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-avg.yaml",
+        "shuffle_neural": True,
+    },
+    "pixel_meg_avg_rvq0_shuffled": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-avg-rvq0.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-avg-rvq0.yaml",
+        "shuffle_neural": True,
+    },
 }
 
 BASE_MODEL_CFG        = CONDITION_MODEL_CFGS[CONDITION]["2layer"]
