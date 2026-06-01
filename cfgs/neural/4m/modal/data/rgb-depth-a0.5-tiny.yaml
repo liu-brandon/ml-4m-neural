@@ -60,16 +60,19 @@ train:
       modality_name_map:
         tok_rgb: tok_rgb@224
         tok_depth: tok_depth@224
-  weights: [1.0, 1.0] # Sampling weights for the training datasets
+  weights: [9.0, 1.0] # Sampling weights for the training datasets
 
 val:
   datasets:
     cc12m:
       use_wds: True
-      data_path: '/project/data/val/cc12m'
+      data_path: '/project/data/val/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00055..00059}.tar'
     things:
       use_wds: True
-      data_path: '/project/data/val/things'
+      data_path: '/project/data/val/things/[tok_rgb,tok_depth]/shard_{000..026}.tar'
+      modality_name_map:
+        tok_rgb: tok_rgb@224
+        tok_depth: tok_depth@224
 # val:
 #   datasets:
 #     cc12m: 

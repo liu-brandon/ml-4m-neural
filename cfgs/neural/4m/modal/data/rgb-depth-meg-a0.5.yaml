@@ -7,11 +7,11 @@ train:
       in_domains: tok_rgb@224-tok_depth@224
       out_domains: tok_rgb@224-tok_depth@224
 
-      # Dirichlet alphas concentration parameter for input and output. 
+      # Dirichlet alphas concentration parameter for input and output.
       # Can be either one value, or one value per input modality separated by hyphen.
       input_alphas: null
       target_alphas: null
-      # Path to specific alphas configuration to enable mixture of Dirichlets. 
+      # Path to specific alphas configuration to enable mixture of Dirichlets.
       # If provided, overrides input_alphas and target_alphas
       alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb2depth-all2all-no-neural.yaml"
 
@@ -20,35 +20,30 @@ train:
 
       # Data can either be local or on cloud storage (e.g. S3), see data docs for more info
       # Use braceexpand notation to indicate shard range (e.g. shard-{0000..9999}.tar)
-      # Use brackets to indicate multiple modalities (e.g. [modality1,modality2,modality3]) 
-      # data_path: '~/projects/data/neural-foundation-model/data/train/cc12m/[rgb@224,tok_rgb@224,tok_depth@224]/shard-{00000..00018}.tar' 
-      data_path: '/project/data/train/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00000..00052}.tar' 
+      # Use brackets to indicate multiple modalities (e.g. [modality1,modality2,modality3])
+      data_path: '/project/data/train/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00000..00052}.tar'
       use_wds: True # Use webdataset
       wds_n_repeats: 2 # Number of repeats for webdataset loader to improve efficiency
       wds_shuffle_buffer_tar: 1_000 # Webdatasets shuffle buffer after loading tar files
       wds_shuffle_buffer_repeat: 1_000 # Webdatasets shuffle buffer after repeating samples
-      
+
       main_augment_domain: rgb@224 # Select from which modality to get the original full image size (mostly important for resizing bounding boxes)
       aligned_captions: False # Align captions to crop_settings
       tok_train_aug: True # Apply data augmentation to tokens (if multiple crop settings are available)
 
-      # modality_name_map: # Use modality_name_map to define a mapping from a folder name to a modality name
-      #   tok_rgb_folder_name: tok_rgb@224
-      #   tok_depth_folder_nme: tok_depth@224
-      #   ...
     things:
       type: multimodal
 
-      # Input and output domain names, separated by hyphen
-      in_domains: tok_rgb@224-tok_depth@224
-      out_domains: tok_rgb@224-tok_depth@224
+      # tok_meg_rvq0..3 are the four RVQ layers from the tok_meg folder.
+      # meg_mask is a presence flag for PresenceAwareUnifiedMasking — data_path only, not in domains.
+      in_domains: tok_rgb@224-tok_depth@224-tok_meg_rvq0-tok_meg_rvq1-tok_meg_rvq2-tok_meg_rvq3
+      out_domains: tok_rgb@224-tok_depth@224-tok_meg_rvq0-tok_meg_rvq1-tok_meg_rvq2-tok_meg_rvq3
 
       input_alphas: null
       target_alphas: null
+      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb-meg-bidirectional-all2all.yaml"
 
-      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb-pure-all2all"
-
-      data_path: '/project/data/train/things/[tok_rgb,tok_depth]/shard_{000..026}.tar'
+      data_path: '/project/data/train/things/[tok_rgb,tok_depth,tok_meg,meg_mask]/shard_{000..026}.tar'
       use_wds: True # Use webdataset
       wds_n_repeats: 2 # Number of repeats for webdataset loader to improve efficiency
       wds_shuffle_buffer_tar: 1_000 # Webdatasets shuffle buffer after loading tar files
@@ -60,9 +55,9 @@ train:
       modality_name_map:
         tok_rgb: tok_rgb@224
         tok_depth: tok_depth@224
-      
-  weights: [9.0, 1.0] # Sampling weights for the training datasets
-  
+
+  weights: [5.0, 1.0] # Sampling weights for the training datasets
+
 val:
   datasets:
     cc12m:
@@ -70,7 +65,7 @@ val:
       data_path: '/project/data/val/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00055..00059}.tar'
     things:
       use_wds: True
-      data_path: '/project/data/val/things/[tok_rgb,tok_depth]/shard_{000..026}.tar'
+      data_path: '/project/data/val/things/[tok_rgb,tok_depth,tok_meg,meg_mask]/shard_{000..026}.tar'
       modality_name_map:
         tok_rgb: tok_rgb@224
         tok_depth: tok_depth@224

@@ -31,7 +31,7 @@ warmup_tokens: .1 # in billions
 batch_size: 512 # overridden per-dim in generate_configs (dim<=256→640, dim=512→256)
 
 # Data
-data_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-a0.5.yaml"
+data_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-pure-all2all.yaml"
 # s3_data_endpoint: "/path/to/endpoint" # Change me
 eval_freq: 5
 fixed_eval: True

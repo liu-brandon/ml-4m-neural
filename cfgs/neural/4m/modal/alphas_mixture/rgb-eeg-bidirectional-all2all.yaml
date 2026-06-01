@@ -1,0 +1,15 @@
+# Bidirectional pixel↔EEG + all2all (3 components, equal weighting)
+# Component 0 (33%): pixel→neural (RGB+depth in, EEG out)
+# Component 1 (33%): neural→pixel (EEG in, RGB+depth out)
+# Component 2 (33%): all2all (all modalities compete)
+sampling_weights: [0.33, 0.33, 0.33]
+alphas_mixture:
+  tok_rgb@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_depth@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_eeg:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]

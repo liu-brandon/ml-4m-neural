@@ -1,0 +1,10 @@
+# Pure all2all for RGB + depth — no directed rgb→depth bias.
+# Single component: equal Dirichlet alpha=0.5 for both modalities.
+# Use this as the CC12M and THINGS alpha config for the rgb_only_pure_all2all condition
+# so training is directly comparable to the neural arms (which also use all2all).
+tok_rgb@224:
+  input_alphas: [0.5]
+  target_alphas: [0.5]
+tok_depth@224:
+  input_alphas: [0.5]
+  target_alphas: [0.5]

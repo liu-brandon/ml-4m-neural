@@ -1,0 +1,24 @@
+# Bidirectional pixel↔MEG + all2all (3 components, equal weighting)
+# Component 0 (33%): pixel→neural (RGB+depth in, MEG out)
+# Component 1 (33%): neural→pixel (MEG in, RGB+depth out)
+# Component 2 (33%): all2all (all modalities compete)
+sampling_weights: [0.33, 0.33, 0.33]
+alphas_mixture:
+  tok_rgb@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_depth@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_meg_rvq0:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_rvq1:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_rvq2:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_rvq3:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]

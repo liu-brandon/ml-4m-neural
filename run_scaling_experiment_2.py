@@ -21,6 +21,8 @@ Usage:
 """
 
 import os
+import re
+import shutil
 import sys
 import json
 import yaml
@@ -46,9 +48,9 @@ import numpy as np
 # ]
 MODEL_CONFIGS = [
     # {"dim": 512, "num_heads": 8, "layers": 3},
-    # {"dim": 256, "num_heads": 4, "layers": 3},
+    # {"dim": 128, "num_heads": 2, "layers": 2}, 
+    {"dim": 256, "num_heads": 4, "layers": 3},
     # {"dim": 192, "num_heads": 3, "layers": 2},
-    {"dim": 128, "num_heads": 2, "layers": 2},
     # {"dim": 256, "num_heads": 4, "layers": 2},
 ]
 
@@ -58,23 +60,66 @@ TRAIN_TOKEN_CONFIGS = [5.0]
 TOKEN_CONFIGS = [5.0]
 # TOKEN_CONFIGS = [8]
 
-# Condition: set to "rgb_only" or "rgb_neural"
-# Run sweep twice, once per condition, to compare scaling laws
-CONDITION = "rgb_only"  # change to "rgb_neural" for experimental condition
+# Condition: "rgb_only" | "pixel_meg" | "pixel_eeg"
+# Set via --condition CLI flag (or modal_train.py condition param).
+# Controls which model/data configs are used and which output subdirectory is written.
+CONDITION = "rgb_only"
 
 # ─────────────────────────────────────────────
-# 2. BASE CONFIG PATHS
+# 2. BASE CONFIG PATHS  (keyed by condition)
 # ─────────────────────────────────────────────
-# These are your existing yaml configs — sweep will copy and patch them
+_CFG_BASE = "/opt/repo/ml-4m/cfgs/neural/4m/modal/model"
+CONDITION_MODEL_CFGS = {
+    # Primary conditions
+    "rgb_only": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling.yaml",
+    },
+    "pixel_meg": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg.yaml",
+    },
+    "pixel_eeg": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-eeg.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-eeg.yaml",
+    },
+    # Subconditions
+    # rgb_only_pure_all2all: no directed rgb→depth bias; pure all2all for both CC12M and
+    # THINGS — fairer baseline vs neural arms which cannot exploit the rgb→depth shortcut.
+    "rgb_only_pure_all2all": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-pure-all2all.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-pure-all2all.yaml",
+    },
+    # pixel_meg_rvq0: MEG arm with only rvq0; removes rvq1-3 whose near-random gradient
+    # signal may be hurting scaling for larger models.
+    "pixel_meg_rvq0": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-rvq0.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-rvq0.yaml",
+    },
+    # pixel_meg_shuffled: null ablation — same config as pixel_meg but neural tokens are
+    # shuffled across the batch each forward pass, breaking image-neural correspondence.
+    # If training loss still decreases, the signal comes from token statistics, not pairing.
+    "pixel_meg_shuffled": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg.yaml",
+        "shuffle_neural": True,
+    },
+    "pixel_meg_rvq0_shuffled": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-rvq0.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-rvq0.yaml",
+        "shuffle_neural": True,
+    },
+}
 
-BASE_MODEL_CFG = "/opt/repo/ml-4m/cfgs/neural/4m/modal/model/4m-neural-2e-2d-scaling.yaml"
-BASE_MODEL_CFG_3_LAYERS = "/opt/repo/ml-4m/cfgs/neural/4m/modal/model/4m-neural-3e-3d-scaling.yaml"
-# BASE_TRAIN_CFG = "cfgs/neural/4m/training/base_train.yaml"
-BASE_DATA_CFG  = "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-a0.5.yaml"  # swap for rgb-depth-neural.yaml
+BASE_MODEL_CFG        = CONDITION_MODEL_CFGS[CONDITION]["2layer"]
+BASE_MODEL_CFG_3_LAYERS = CONDITION_MODEL_CFGS[CONDITION]["3layer"]
 
-# SWEEP_OUTPUT_DIR = Path(f"/scratch/users/liubr/neural-image-foundation-data/scaling_sweep/{CONDITION}")
-SWEEP_OUTPUT_DIR = Path("/project/data/scaling_sweep")
+SWEEP_BASE_DIR   = Path("/project/data/scaling_sweep")
+SWEEP_OUTPUT_DIR = SWEEP_BASE_DIR / CONDITION
 RESULTS_FILE     = SWEEP_OUTPUT_DIR / "results.json"
+
+# Run directory name pattern — used by auto-discovery (independent of MODEL_CONFIGS)
+_RUN_RE = re.compile(r"^dim(\d+)_layer(\d+)_tok([\d.]+)B$")
 
 
 # ─────────────────────────────────────────────
@@ -86,7 +131,8 @@ def make_run_name(dim, layers, total_tokens):
     # return f"dim{dim}_tok{total_tokens}B"
 
 
-def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, test_run):
+def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, test_run,
+                     large_gpu=False):
     """Generate patched yaml configs for a single sweep run."""
     run_name = make_run_name(dim, layers, total_tokens)
     run_dir  = sweep_output_dir / run_name
@@ -105,10 +151,27 @@ def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, tes
     # model_cfg["num_heads"] = num_heads
     model_cfg["model"] += f"_{dim}_dim"
 
-    # Per-dim batch size: A100-40GB OOMs on 3-layer dim=512 at bs=512.
-    # dim=256 3-layer fits ~24 GiB at bs=640; dim=512 needs bs=256.
-    if layers == 3:
-        model_cfg["batch_size"] = 640 if dim <= 256 else 256
+    # Per-dim batch sizes tuned for A100-40GB.
+    # Memory ≈ bs × (C_fixed + C_act × dim × layers); C_fixed dominates for small models.
+    # dim=128 2e2d: 640 is fine (observed 38 GB reserved, ~18 GB actual working set).
+    # dim=192 2e2d: 640 likely OOMs (no prior override existed here).
+    # dim=256 3e3d: 640 is borderline; 512 gives ~8 GB headroom.
+    # dim=512 3e3d: OOMs at bs=512 on 40GB; use --large_gpu for 80GB A100 (bs=512 safe).
+    bs_map = {
+        (128, 2): 640,
+        (192, 2): 512,
+        (256, 3): 512,
+        (512, 3): 256,
+    }
+    if large_gpu:
+        bs_map[(512, 3)] = 512
+    model_cfg["batch_size"] = bs_map.get((dim, layers), 512)
+
+    # clip_grad scales with model size: 512-dim gradients have intrinsically higher L2 norm
+    # (~√N scaling) and at bs=256 were clipped 44-75% of training steps. 6.0 is a safety net
+    # only; 192/256 dims will never approach it in normal training.
+    if large_gpu and (dim, layers) == (512, 3):
+        model_cfg["clip_grad"] = 6.0
 
     if test_run:
         run_dir = run_dir / "test_run"
@@ -141,7 +204,7 @@ def generate_configs(dim, layers, num_heads, total_tokens, sweep_output_dir, tes
 # 4. TRAINING LAUNCH
 # ─────────────────────────────────────────────
 
-def launch_training(model_cfg_path, run_dir):
+def launch_training(model_cfg_path, run_dir, shuffle_neural=False):
     """
     Launch a single training run. Adapt this for your cluster/Modal setup.
     Currently runs sequentially via subprocess — see Modal section below.
@@ -155,8 +218,14 @@ def launch_training(model_cfg_path, run_dir):
         "train",
         "--config", str(model_cfg_path),
     ]
-    if test_run:
-        cmd.extend(["--", "--device", "cpu", "--dist_backend", "gloo"])
+    extra = []
+    if shuffle_neural:
+        extra.append("--shuffle_neural_tokens")
+    if test_run or extra:
+        cmd.append("--")
+        if test_run:
+            extra = ["--device", "cpu", "--dist_backend", "gloo"] + extra
+        cmd.extend(extra)
 
     print(f"Launching: {' '.join(cmd)}")
     print(f"Logging to: {log_path}", flush=True)
@@ -214,108 +283,199 @@ def launch_training(model_cfg_path, run_dir):
 #     return emb_params + transformer_params + misc_params
 
 
-def extract_final_loss(run_dir, test_run=False):
-    """
-    Extract final validation loss from training log or checkpoint.
-    Adapt to however your training code logs results.
+# cc12m keys are required for a row to be included; things keys collected when present
+_CC12M_REQUIRED = [
+    "[Fixed Eval (cc12m)] tok_rgb@224_loss",
+    "[Fixed Eval (cc12m)] tok_depth@224_loss",
+]
+_THINGS_OPTIONAL_PATTERNS = [
+    "[Fixed Eval (things)] tok_rgb@224_loss",
+    "[Fixed Eval (things)] tok_depth@224_loss",
+    "[Fixed Eval (things)] tok_meg_rvq0_loss",
+    "[Fixed Eval (things)] tok_meg_rvq1_loss",
+    "[Fixed Eval (things)] tok_meg_rvq2_loss",
+    "[Fixed Eval (things)] tok_meg_rvq3_loss",
+    "[Fixed Eval (things)] tok_eeg_loss",
+]
 
-    Returns float loss or None if run didn't complete.
+
+def extract_final_loss(run_dir, test_run=False):
+    """Parse checkpoints/log.txt and return rows that have Fixed Eval (cc12m) data.
+
+    Rows without both cc12m RGB and depth eval keys are skipped (they are
+    training-only log lines that never triggered an eval).  Any things Fixed Eval
+    keys found in the same row are included as optional fields.
     """
     log_path = run_dir / "checkpoints" / "log.txt"
-
     if not log_path.exists():
         print(f"  No log found at {log_path}")
         return []
 
-    # Parse the last eval loss line from your log format:
-    # "[Eval (cc12m)]  ... loss: X.XXXX ..."
-    losses = [] # each a dict of (rgb loss, depth loss, tokens seen)
+    losses = []
     with open(log_path) as f:
         for line in f:
-            data = json.loads(line)
-            result = {
-                "total_tokens_seen_b": data.get("total_tokens_seen_b"),
-            }
-            
-            # Extract all Fixed Eval tok_rgb@224_loss and tok_depth@224_loss
-            for key, value in data.items():
-                if "Fixed Eval" in key and ("tok_rgb@224_loss" in key or "tok_depth@224_loss" in key):
-                    result[key] = value
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "total_tokens_seen_b" not in data:
+                continue
+            if not all(k in data for k in _CC12M_REQUIRED):
+                continue
+            result = {"total_tokens_seen_b": data["total_tokens_seen_b"]}
+            for k in _CC12M_REQUIRED:
+                result[k] = data[k]
+            for k in _THINGS_OPTIONAL_PATTERNS:
+                if k in data:
+                    result[k] = data[k]
             losses.append(result)
-    
 
-    if len(losses) == 0:
-        print(f"  Could not parse loss from {log_path}")
-
+    if not losses:
+        print(f"  Could not parse Fixed Eval loss from {log_path}")
     return losses
 
 def extract_model_size(run_dir, test_run):
+    """Total parameter count from train.log (includes embedding tables)."""
     log_path = run_dir / "train.log"
-    
-
     if not log_path.exists():
         print(f"  No log found at {log_path}")
         return None
-    
     with open(log_path) as f:
         for line in f:
             if "Number of params:" in line:
                 return float(line.split(": ")[1].split(" ")[0]) * 1e6
 
-def collect_results(results_file, sweep_output_dir, model_configs, token_configs, test_run=False):
-    """Collect (N, D, loss) from all completed runs."""
-    results = []
 
-    for model_cfg in model_configs:
-        dim       = model_cfg["dim"]
-        num_heads = model_cfg["num_heads"]
-        # N         = count_parameters(dim, num_heads)
-        layers    = model_cfg["layers"]
+def transformer_param_count(dim: int, layers: int) -> int:
+    """Transformer backbone parameters, excluding embedding tables.
 
-        for total_tokens in token_configs:
+    Embedding tables (vocab × dim per modality) are O(dim) lookup ops, not O(dim²)
+    compute like attention/FFN. Including them inflates N for small models and makes
+    cross-condition comparisons misleading — each condition has different embedding sizes
+    (rgb_only < pixel_eeg < pixel_meg) for the same backbone.
+
+    Each encoder block (no bias): 4*dim² (attn) + 8*dim² (FFN, gelu 4×) = 12*dim²
+    Each decoder block (no bias): 4*dim² (cross-attn) + 4*dim² (self-attn) + 8*dim² = 16*dim²
+    Layer norms O(dim) are negligible vs O(dim²).
+    4M uses equal encoder/decoder depth (ne == nd == layers).
+    """
+    return (12 + 16) * layers * dim ** 2
+
+def _pick_token_checkpoints(losses: list[dict], n_points: int = 3, min_tokens: float = 1.0) -> list[dict]:
+    """Return up to n_points rows at evenly-spaced token fractions of the run's budget.
+
+    Picks targets at 1/n, 2/n, …, n/n of the final token count, then snaps each
+    to the nearest available checkpoint row.  Deduplicates so the same row is never
+    returned twice (can happen when checkpointing was sparse).  Rows below min_tokens
+    are excluded so the Chinchilla fit only uses well-trained checkpoints.
+    """
+    if not losses:
+        return []
+    max_tokens = max(r["total_tokens_seen_b"] for r in losses)
+    targets = [(i + 1) / n_points * max_tokens for i in range(n_points)]
+    seen: set[float] = set()
+    picked = []
+    for target in targets:
+        if target < min_tokens:
+            continue
+        best = min(losses, key=lambda r: abs(r["total_tokens_seen_b"] - target))
+        t = best["total_tokens_seen_b"]
+        if t not in seen:
+            seen.add(t)
+            picked.append(best)
+    return picked
+
+
+def _discover_runs_in_dir(condition_dir: Path, test_run: bool = False):
+    """Yield (dim, layers, total_tokens, run_dir) for each matching subdir."""
+    for d in sorted(condition_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        m = _RUN_RE.match(d.name)
+        if not m:
+            continue
+        dim, layers, tok = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        run_dir = d / "test_run" if test_run else d
+        yield dim, layers, tok, run_dir
+
+
+def collect_results(sweep_base_dir: Path, conditions=None, test_run: bool = False):
+    """Collect (N, D, loss) for all conditions found under sweep_base_dir.
+
+    Auto-discovers run directories from the filesystem — does not require
+    MODEL_CONFIGS or TOKEN_CONFIGS to be set.  conditions can be a list of
+    condition names to process, or None to auto-discover every subdirectory.
+    Saves {sweep_base_dir}/{condition}/results.json per condition.
+    """
+    sweep_base_dir = Path(sweep_base_dir)
+
+    if conditions is None:
+        conditions = [d.name for d in sorted(sweep_base_dir.iterdir())
+                      if d.is_dir() and not d.name.startswith(".")]
+    elif isinstance(conditions, str):
+        conditions = [conditions]
+
+    all_results: dict[str, list] = {}
+
+    for condition in conditions:
+        condition_dir = sweep_base_dir / condition
+        if not condition_dir.exists():
+            print(f"  Skipping {condition}: directory not found")
+            continue
+
+        print(f"\nCollecting condition: {condition}")
+        results = []
+
+        for dim, layers, total_tokens, run_dir in _discover_runs_in_dir(condition_dir, test_run):
             run_name = make_run_name(dim, layers, total_tokens)
-            run_dir  = sweep_output_dir / run_name
-            if test_run:
-                run_dir = run_dir / "test_run"
+            losses   = extract_final_loss(run_dir, test_run)
+            N        = transformer_param_count(dim, layers)
+            N_total  = extract_model_size(run_dir, test_run)
 
-            # D    = int(total_tokens * 1e9)   # convert B tokens → raw count
-            losses = extract_final_loss(run_dir, test_run)
-            N = extract_model_size(run_dir, test_run)
-
-            if len(losses) > 0:
-                indices = set([
-                    len(losses) // 3,
-                    2 * len(losses) // 3,
-                    len(losses) - 1,
-                ])
-                for i, loss in enumerate(losses):
-                    if i not in indices:
-                        continue
-                    total_tokens_seen = loss["total_tokens_seen_b"]
-                    if total_tokens_seen < 1.0:
-                        continue
-
-                    results.append({
+            checkpoints = _pick_token_checkpoints(losses)
+            if checkpoints:
+                for loss in checkpoints:
+                    entry = {
                         "run":          run_name,
                         "dim":          dim,
                         "N":            N,
+                        "N_total":      N_total,
                         "layers":       layers,
                         "total_tokens": loss["total_tokens_seen_b"],
                         "D":            loss["total_tokens_seen_b"] * 1e9,
                         "loss_rgb":     loss["[Fixed Eval (cc12m)] tok_rgb@224_loss"],
-                        "loss_depth":   loss["[Fixed Eval (cc12m)] tok_depth@224_loss"]
-                    })
-                # print(f"  {run_name}: N={N:,}  D={D:,}  losses={losses:}")
+                        "loss_depth":   loss["[Fixed Eval (cc12m)] tok_depth@224_loss"],
+                    }
+                    # Optional neural losses — present for pixel_meg / pixel_eeg conditions
+                    _neural_map = {
+                        "loss_meg_rvq0": "[Fixed Eval (things)] tok_meg_rvq0_loss",
+                        "loss_meg_rvq1": "[Fixed Eval (things)] tok_meg_rvq1_loss",
+                        "loss_meg_rvq2": "[Fixed Eval (things)] tok_meg_rvq2_loss",
+                        "loss_meg_rvq3": "[Fixed Eval (things)] tok_meg_rvq3_loss",
+                        "loss_eeg":      "[Fixed Eval (things)] tok_eeg_loss",
+                        "loss_things_rgb":   "[Fixed Eval (things)] tok_rgb@224_loss",
+                        "loss_things_depth": "[Fixed Eval (things)] tok_depth@224_loss",
+                    }
+                    for out_key, src_key in _neural_map.items():
+                        if src_key in loss:
+                            entry[out_key] = loss[src_key]
+                    results.append(entry)
+                tokens_str = ", ".join(f"{l['total_tokens_seen_b']:.2f}B" for l in checkpoints)
+                print(f"  {run_name}: {len(checkpoints)} points at [{tokens_str}]")
             else:
                 print(f"  {run_name}: INCOMPLETE — skipping")
 
-    # Save results
-    sweep_output_dir.mkdir(parents=True, exist_ok=True)
-    with open(results_file, "w") as f:
-        json.dump(results, f, indent=2)
+        results_file = condition_dir / "results.json"
+        condition_dir.mkdir(parents=True, exist_ok=True)
+        with open(results_file, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"  Saved {len(results)} points → {results_file}")
+        all_results[condition] = results
 
-    print(f"\nSaved {len(results)} results to {results_file}")
-    return results
+    return all_results
 
 
 # ─────────────────────────────────────────────
@@ -366,8 +526,12 @@ def fit_scaling_law(results, sweep_output_dir, condition, loss_type="rgb"):
  
     # Initialize Chinchilla — no seed_ranges needed since we're only fitting,
     # not using it to suggest next runs
+    db_dir = sweep_output_dir / f"chinchilla_db_{loss_type}"
+    if db_dir.exists():
+        shutil.rmtree(db_dir)
+
     cc = Chinchilla(
-        project_dir=str(sweep_output_dir / f"chinchilla_db_{loss_type}"),
+        project_dir=str(db_dir),
  
         param_grid=dict(
             # E: irreducible loss floor — set below your best observed loss
@@ -422,6 +586,12 @@ def fit_scaling_law(results, sweep_output_dir, condition, loss_type="rgb"):
 # 7. PLOTTING
 # ─────────────────────────────────────────────
 
+def _safe_legend(ax) -> None:
+    handles, _ = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend()
+
+
 def plot_results(results, sweep_output_dir, model_configs, condition, law=None, loss_type="rgb"):
     """Basic loss curve plots for qualitative scaling observations."""
     try:
@@ -431,56 +601,66 @@ def plot_results(results, sweep_output_dir, model_configs, condition, law=None, 
         print("pip install matplotlib numpy for plotting")
         return
 
+    loss_key = f"loss_{loss_type}"
+    valid = [r for r in results if r.get(loss_key) is not None]
+    if not valid:
+        print(f"  No results with loss_{loss_type} — skipping plot")
+        return
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle(f"Scaling Laws — {condition}")
+    fig.suptitle(f"Scaling Laws — {condition}  [{loss_type}]")
 
-    colors = ["#2196F3", "#FF5722", "#4CAF50"]
+    colors = ["#2196F3", "#FF5722", "#4CAF50", "#9C27B0", "#FF9800"]
 
-    # Left: loss vs D (tokens), one line per model size
+    # Left: loss vs D (tokens), one line per (dim, layers)
     ax = axes[0]
-    for i, model_cfg in enumerate(model_configs):
-        dim = model_cfg["dim"]
-        layers = model_cfg["layers"]
-        pts = [(r["D"], r[f"loss_{loss_type}"]) for r in results if r["dim"] == dim]
-        for r in results:
-            if r["dim"] == dim and r["layers"] == layers:
-                N = r["N"]
-                break
-
+    dims_seen = sorted({(r["dim"], r["layers"]) for r in valid})
+    for i, (dim, layers) in enumerate(dims_seen):
+        pts = sorted(
+            (r["D"], r[loss_key])
+            for r in valid if r["dim"] == dim and r["layers"] == layers
+        )
         if not pts:
             continue
-        pts.sort()
+        N = next(r["N"] for r in valid if r["dim"] == dim and r["layers"] == layers)
         D_pts, L_pts = zip(*pts)
-        # N = count_parameters(dim, model_cfg["num_heads"])
-        ax.plot(D_pts, L_pts, "o-", color=colors[i], label=f"dim={dim} (N≈{N/1e6:.1f}M)")
+        ax.plot(D_pts, L_pts, "o-", color=colors[i % len(colors)],
+                label=f"dim={dim} L{layers} (N≈{N/1e6:.1f}M)")
 
     ax.set_xlabel("Tokens seen (D)")
     ax.set_ylabel("Validation loss")
     ax.set_title("Loss vs. Data Scale")
     ax.set_xscale("log")
-    ax.legend()
+    _safe_legend(ax)
     ax.grid(True, alpha=0.3)
 
-    # Right: loss vs N (params), one line per token budget
+    # Right: loss vs N (params), one line per approximate token budget.
+    # Snap each result's total_tokens to the nearest 0.5B to group iso-FLOPs curves
+    # without requiring exact matches against TOKEN_CONFIGS.
     ax = axes[1]
-    token_colors = ["#9C27B0", "#00BCD4", "#FF9800"]
-    for i, total_tokens in enumerate(TOKEN_CONFIGS):
-        pts = [
-            (r["N"],
-             r[f"loss_{loss_type}"])
-            for r in results if r["total_tokens"] == total_tokens
-        ]
+    token_colors = ["#9C27B0", "#00BCD4", "#FF9800", "#4CAF50"]
+
+    def _snap(t, resolution=0.5):
+        return round(t / resolution) * resolution
+
+    snapped_budgets = sorted({_snap(r["total_tokens"]) for r in valid})
+    for i, budget in enumerate(snapped_budgets):
+        pts = sorted(
+            (r["N"], r[loss_key])
+            for r in valid if _snap(r["total_tokens"]) == budget
+        )
         if not pts:
             continue
-        pts.sort()
-        N_pts, L_pts = zip(*pts)
-        ax.plot(N_pts, L_pts, "s-", color=token_colors[i], label=f"{total_tokens}B tokens")
+        pts_deduped = dict(pts)  # keep lowest loss if multiple runs share same N
+        N_pts, L_pts = zip(*sorted(pts_deduped.items()))
+        ax.plot(N_pts, L_pts, "s-", color=token_colors[i % len(token_colors)],
+                label=f"~{budget:.1f}B tokens")
 
     ax.set_xlabel("Parameters (N)")
     ax.set_ylabel("Validation loss")
     ax.set_title("Loss vs. Model Scale")
     ax.set_xscale("log")
-    ax.legend()
+    _safe_legend(ax)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -494,10 +674,16 @@ def plot_results(results, sweep_output_dir, model_configs, condition, law=None, 
 # 8. MAIN
 # ─────────────────────────────────────────────
 
-def run_sweep(model_configs, train_token_configs, sweep_output_dir, condition, test_run=False):
+def run_sweep(model_configs, train_token_configs, sweep_output_dir, condition, test_run=False,
+              large_gpu=False):
     """Launch all training runs sequentially."""
     print(f"Starting sweep: {len(model_configs)} model sizes x {len(train_token_configs)} token counts")
-    print(f"Condition: {condition}\n")
+    print(f"Condition: {condition}  large_gpu: {large_gpu}\n")
+
+    condition_meta = CONDITION_MODEL_CFGS.get(condition, {})
+    shuffle_neural = condition_meta.get("shuffle_neural", False)
+    if shuffle_neural:
+        print("[shuffle] Neural token shuffling enabled for this condition\n")
 
     for model_cfg in model_configs:
         for total_tokens in train_token_configs:
@@ -511,29 +697,46 @@ def run_sweep(model_configs, train_token_configs, sweep_output_dir, condition, t
             print(f"{'='*50}")
 
             model_cfg_path, run_dir = generate_configs(
-                dim, layers, num_heads, total_tokens, sweep_output_dir, test_run
+                dim, layers, num_heads, total_tokens, sweep_output_dir, test_run,
+                large_gpu=large_gpu,
             )
-            launch_training(model_cfg_path, run_dir)
+            launch_training(model_cfg_path, run_dir, shuffle_neural=shuffle_neural)
 
     print("\nSweep complete. Run with --mode fit to analyze results.")
 
 
-def run_fit(results_file, sweep_output_dir, condition, test_run=False, loss_type="rgb"):
-    """Collect results and fit scaling law."""
-    # if not results_file.exists():
-    #     print("Collecting results from training logs...")
-    #     results = collect_results(test_run)
-    # else:
-    print(f"Loading existing results from {results_file}")
-    with open(results_file) as f:
-        results = json.load(f)
+def run_fit(sweep_base_dir: Path, conditions=None, test_run: bool = False, loss_type: str = "rgb"):
+    """Load results.json for each condition and fit + plot the scaling law."""
+    sweep_base_dir = Path(sweep_base_dir)
 
-    if not results:
-        print("No results found. Run sweep first, then collect, then fit.")
-        return
+    if conditions is None:
+        conditions = [d.name for d in sorted(sweep_base_dir.iterdir())
+                      if d.is_dir() and not d.name.startswith(".")]
+    elif isinstance(conditions, str):
+        conditions = [conditions]
 
-    law = fit_scaling_law(results, sweep_output_dir, condition, loss_type)
-    plot_results(results, sweep_output_dir, MODEL_CONFIGS, condition, law, loss_type)
+    for condition in conditions:
+        results_file = sweep_base_dir / condition / "results.json"
+        if not results_file.exists():
+            print(f"  {condition}: no results.json — run collect first")
+            continue
+
+        print(f"\nFitting condition: {condition}")
+        with open(results_file) as f:
+            results = json.load(f)
+
+        if not results:
+            print(f"  {condition}: empty results")
+            continue
+
+        valid = [r for r in results if r.get(f"loss_{loss_type}") is not None]
+        if len(valid) < 3:
+            print(f"  {condition}: only {len(valid)} valid {loss_type} points — need ≥3")
+            continue
+
+        sweep_output_dir = sweep_base_dir / condition
+        law = fit_scaling_law(valid, sweep_output_dir, condition, loss_type)
+        plot_results(valid, sweep_output_dir, MODEL_CONFIGS, condition, law, loss_type)
 
 
 if __name__ == "__main__":
@@ -545,21 +748,54 @@ if __name__ == "__main__":
         help="sweep: run training; fit: analyze results; collect: just parse logs; all: both"
     )
     parser.add_argument(
+        "--condition",
+        choices=list(CONDITION_MODEL_CFGS.keys()),
+        default=None,
+        help="which modality arm; omit to process all conditions found under sweep_base_dir "
+             "(collect/fit) or required for sweep/dryrun (controls model/data configs)",
+    )
+    parser.add_argument(
         "--test_run",
         action="store_true",
         default=False
     )
-    parser.add_argument("--loss_type", choices=["rgb", "depth"], type=str, default="rgb")
+    parser.add_argument(
+        "--loss_type",
+        choices=["rgb", "depth", "meg_rvq0", "meg_rvq1", "meg_rvq2", "meg_rvq3",
+                 "eeg", "things_rgb", "things_depth"],
+        type=str,
+        default="rgb",
+    )
+    parser.add_argument(
+        "--large_gpu",
+        action="store_true",
+        default=False,
+        help="use A100-80GB batch sizes (dim=512 3e3d: bs=512 instead of 256)",
+    )
     args = parser.parse_args()
     test_run = args.test_run
     loss_type = args.loss_type
+    large_gpu = args.large_gpu
+
+    # sweep / all require a specific condition (controls which model+data configs to launch).
+    # collect / fit default to all conditions when --condition is omitted.
+    CONDITION = args.condition
+
+    if args.mode in ("sweep", "all"):
+        if CONDITION is None:
+            parser.error("--condition is required for --mode sweep / all")
+        BASE_MODEL_CFG = CONDITION_MODEL_CFGS[CONDITION]["2layer"]
+        BASE_MODEL_CFG_3_LAYERS = CONDITION_MODEL_CFGS[CONDITION]["3layer"]
+        SWEEP_OUTPUT_DIR = SWEEP_BASE_DIR / CONDITION
+
     if args.mode == "sweep":
-        run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run)
+        run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run,
+                  large_gpu=large_gpu)
     elif args.mode == "fit":
-        run_fit(RESULTS_FILE, SWEEP_OUTPUT_DIR, CONDITION, test_run, loss_type)
+        run_fit(SWEEP_BASE_DIR, conditions=CONDITION, test_run=test_run, loss_type=loss_type)
     elif args.mode == "collect":
-        collect_results(RESULTS_FILE, SWEEP_OUTPUT_DIR, MODEL_CONFIGS, TOKEN_CONFIGS, test_run)
+        collect_results(SWEEP_BASE_DIR, conditions=CONDITION, test_run=test_run)
     elif args.mode == "all":
         run_sweep(MODEL_CONFIGS, TRAIN_TOKEN_CONFIGS, SWEEP_OUTPUT_DIR, CONDITION, test_run)
-        collect_results(RESULTS_FILE, SWEEP_OUTPUT_DIR, MODEL_CONFIGS, TOKEN_CONFIGS, test_run)
-        run_fit(RESULTS_FILE, SWEEP_OUTPUT_DIR, CONDITION, test_run, loss_type)
+        collect_results(SWEEP_BASE_DIR, conditions=CONDITION, test_run=test_run)
+        run_fit(SWEEP_BASE_DIR, conditions=CONDITION, test_run=test_run, loss_type=loss_type)
