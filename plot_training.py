@@ -34,18 +34,30 @@ import numpy as np
 
 DIM_COLORS = {128: "#1f77b4", 192: "#ff7f0e", 256: "#2ca02c", 512: "#d62728"}
 CONDITION_STYLES = {
-    "rgb_only":               "-",
-    "rgb_only_pure_all2all":  "-.",
-    "pixel_meg":              "--",
-    "pixel_meg_rvq0":         (0, (3, 1, 1, 1)),  # densely dashdotted
-    "pixel_eeg":              ":",
+    "rgb_only":                    "-",
+    "rgb_only_pure_all2all":       "-.",
+    "pixel_meg":                   "--",
+    "pixel_meg_rvq0":              (0, (3, 1, 1, 1)),    # densely dashdotted
+    "pixel_meg_shuffled":          (0, (5, 5)),           # loose dashes
+    "pixel_meg_rvq0_shuffled":     (0, (3, 3, 1, 3)),    # dash-dot loose
+    "pixel_meg_avg":               (0, (5, 1)),           # dense dashes
+    "pixel_meg_avg_rvq0":          (0, (3, 1, 1, 1, 1, 1)),  # dash-dot-dot
+    "pixel_meg_avg_shuffled":      (0, (5, 1, 1, 1)),    # dense dash-dot
+    "pixel_meg_avg_rvq0_shuffled": (0, (1, 1)),           # dotted
+    "pixel_eeg":                   ":",
 }
 CONDITION_LABELS = {
-    "rgb_only":               "RGB-only (rgb→depth bias)",
-    "rgb_only_pure_all2all":  "RGB-only (all2all)",
-    "pixel_meg":              "Pixel+MEG",
-    "pixel_meg_rvq0":         "Pixel+MEG (rvq0 only)",
-    "pixel_eeg":              "Pixel+EEG",
+    "rgb_only":                    "RGB-only (rgb→depth bias)",
+    "rgb_only_pure_all2all":       "RGB-only (all2all)",
+    "pixel_meg":                   "Pixel+MEG",
+    "pixel_meg_rvq0":              "Pixel+MEG (rvq0 only)",
+    "pixel_meg_shuffled":          "Pixel+MEG (shuffled)",
+    "pixel_meg_rvq0_shuffled":     "Pixel+MEG rvq0 (shuffled)",
+    "pixel_meg_avg":               "Pixel+MEG avg",
+    "pixel_meg_avg_rvq0":          "Pixel+MEG avg (rvq0 only)",
+    "pixel_meg_avg_shuffled":      "Pixel+MEG avg (shuffled)",
+    "pixel_meg_avg_rvq0_shuffled": "Pixel+MEG avg rvq0 (shuffled)",
+    "pixel_eeg":                   "Pixel+EEG",
 }
 
 
@@ -318,16 +330,22 @@ def plot_fixed_eval(
 
 # ─── plot 3: MEG RVQ breakdown ───────────────────────────────────────────────
 
-def plot_meg_rvq(runs: dict[tuple, list[dict]], outdir: Path):
-    meg_runs = {k: v for k, v in runs.items() if k[0] != "rgb_only"}
-    if not meg_runs:
+def _plot_meg_rvq_variant(
+    runs: dict[tuple, list[dict]],
+    outdir: Path,
+    key_prefix: str,
+    title_prefix: str,
+    filename: str,
+) -> None:
+    eval_key_0 = f"[Fixed Eval (things)] {key_prefix}0_loss"
+    active = {k: v for k, v in runs.items() if any(eval_key_0 in r for r in v)}
+    if not active:
         return
 
     _, axes = plt.subplots(1, 4, figsize=(22, 5))
-
     for i, ax in enumerate(axes):
-        key = f"[Fixed Eval (things)] tok_meg_rvq{i}_loss"
-        for (cond, dim, layers), rows in sorted(meg_runs.items()):
+        key = f"[Fixed Eval (things)] {key_prefix}{i}_loss"
+        for (cond, dim, layers), rows in sorted(active.items()):
             x, y = _series(rows, key)
             if x:
                 ax.plot(x, y, "o-", label=_label(cond, dim, layers),
@@ -336,28 +354,37 @@ def plot_meg_rvq(runs: dict[tuple, list[dict]], outdir: Path):
                    label=f"chance  ln(512) = {MEG_CHANCE:.2f}")
         ax.set_xlabel("Tokens seen (B)")
         ax.set_ylabel("Fixed Eval loss (nats)")
-        ax.set_title(f"MEG rvq{i}  (THINGS Fixed Eval)")
+        ax.set_title(f"{title_prefix} rvq{i}  (THINGS Fixed Eval)")
         _legend(ax, fontsize=8)
         ax.grid(alpha=0.3)
 
     plt.tight_layout()
-    out = outdir / "meg_rvq.png"
+    out = outdir / filename
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved {out}")
+
+
+def plot_meg_rvq(runs: dict[tuple, list[dict]], outdir: Path):
+    _plot_meg_rvq_variant(runs, outdir, "tok_meg_rvq", "MEG", "meg_rvq.png")
+    _plot_meg_rvq_variant(runs, outdir, "tok_meg_avg_rvq", "MEG avg", "meg_avg_rvq.png")
 
 
 # ─── plot 4: train vs eval combined ─────────────────────────────────────────
 
 _TRAIN_EVAL_PANELS = [
     # (title,  train_key,                           eval_key)
-    ("RGB (cc12m)",   "[Epoch] tok_rgb@224_loss",   "[Fixed Eval (cc12m)] tok_rgb@224_loss"),
-    ("Depth (cc12m)", "[Epoch] tok_depth@224_loss", "[Fixed Eval (cc12m)] tok_depth@224_loss"),
-    ("MEG rvq0",      "[Epoch] tok_meg_rvq0_loss",  "[Fixed Eval (things)] tok_meg_rvq0_loss"),
-    ("MEG rvq1",      "[Epoch] tok_meg_rvq1_loss",  "[Fixed Eval (things)] tok_meg_rvq1_loss"),
-    ("MEG rvq2",      "[Epoch] tok_meg_rvq2_loss",  "[Fixed Eval (things)] tok_meg_rvq2_loss"),
-    ("MEG rvq3",      "[Epoch] tok_meg_rvq3_loss",  "[Fixed Eval (things)] tok_meg_rvq3_loss"),
-    ("EEG",           "[Epoch] tok_eeg_loss",       "[Fixed Eval (things)] tok_eeg_loss"),
+    ("RGB (cc12m)",       "[Epoch] tok_rgb@224_loss",       "[Fixed Eval (cc12m)] tok_rgb@224_loss"),
+    ("Depth (cc12m)",     "[Epoch] tok_depth@224_loss",     "[Fixed Eval (cc12m)] tok_depth@224_loss"),
+    ("MEG rvq0",          "[Epoch] tok_meg_rvq0_loss",      "[Fixed Eval (things)] tok_meg_rvq0_loss"),
+    ("MEG rvq1",          "[Epoch] tok_meg_rvq1_loss",      "[Fixed Eval (things)] tok_meg_rvq1_loss"),
+    ("MEG rvq2",          "[Epoch] tok_meg_rvq2_loss",      "[Fixed Eval (things)] tok_meg_rvq2_loss"),
+    ("MEG rvq3",          "[Epoch] tok_meg_rvq3_loss",      "[Fixed Eval (things)] tok_meg_rvq3_loss"),
+    ("MEG avg rvq0",      "[Epoch] tok_meg_avg_rvq0_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq0_loss"),
+    ("MEG avg rvq1",      "[Epoch] tok_meg_avg_rvq1_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq1_loss"),
+    ("MEG avg rvq2",      "[Epoch] tok_meg_avg_rvq2_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq2_loss"),
+    ("MEG avg rvq3",      "[Epoch] tok_meg_avg_rvq3_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq3_loss"),
+    ("EEG",               "[Epoch] tok_eeg_loss",           "[Fixed Eval (things)] tok_eeg_loss"),
 ]
 
 

@@ -198,6 +198,8 @@ def get_args():
     parser.add_argument('--find_unused_params', action='store_true')
     parser.add_argument('--no_find_unused_params', action='store_false', dest='find_unused_params')
     parser.set_defaults(find_unused_params=False)
+    parser.add_argument('--drop_path_rate_encoder', type=float, default=0.0)
+    parser.add_argument('--drop_path_rate_decoder', type=float, default=0.0)
 
     parser.add_argument('--rlimit', default=4096, type=int, 
                         help='Increase rlimit to avoid "RuntimeError: received 0 items of ancdata".')
@@ -382,6 +384,8 @@ def get_model(args, modality_info):
         decoder_embeddings=decoder_embeddings,
         modality_info=modality_info,
         num_register_tokens=args.num_register_tokens,
+        drop_path_rate_encoder=args.drop_path_rate_encoder,
+        drop_path_rate_decoder=args.drop_path_rate_decoder,
     )
 
     return model
