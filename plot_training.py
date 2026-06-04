@@ -45,6 +45,7 @@ CONDITION_STYLES = {
     "pixel_meg_avg_shuffled":      (0, (5, 1, 1, 1)),    # dense dash-dot
     "pixel_meg_avg_rvq0_shuffled": (0, (1, 1)),           # dotted
     "pixel_eeg":                   ":",
+    "pixel_dinov2":                (0, (4, 1, 1, 1, 1, 1)),  # dash-dot-dot (positive control)
 }
 CONDITION_LABELS = {
     "rgb_only":                    "RGB-only (rgb→depth bias)",
@@ -58,6 +59,7 @@ CONDITION_LABELS = {
     "pixel_meg_avg_shuffled":      "Pixel+MEG avg (shuffled)",
     "pixel_meg_avg_rvq0_shuffled": "Pixel+MEG avg rvq0 (shuffled)",
     "pixel_eeg":                   "Pixel+EEG",
+    "pixel_dinov2":                "Pixel+DINOv2 (positive ctrl)",
 }
 
 
@@ -253,11 +255,12 @@ def plot_training_loss(
             "Depth": "[Epoch] tok_depth@224_loss",
             "RGB":   "[Epoch] tok_rgb@224_loss",
         }
-        # add MEG columns if any run has them
-        for cond, dim, layers in runs:
-            if cond != "rgb_only":
+        # add MEG/DINOv2 columns if any run has them
+        for (cond, dim, layers), rows in runs.items():
+            if any("[Epoch] tok_meg_rvq0_loss" in r for r in rows):
                 keys["MEG rvq0"] = "[Epoch] tok_meg_rvq0_loss"
-                break
+            if any("[Epoch] tok_dinov2@224_loss" in r for r in rows):
+                keys["DINOv2"] = "[Epoch] tok_dinov2@224_loss"
 
     ncols = len(keys)
     _, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 5), squeeze=False)
@@ -293,13 +296,20 @@ def plot_fixed_eval(
         ("THINGS Depth", "[Fixed Eval (things)] tok_depth@224_loss"),
         ("THINGS RGB",   "[Fixed Eval (things)] tok_rgb@224_loss"),
     ]
-    # include THINGS MEG rvq0 if any run has it
+    # include THINGS MEG rvq0 / DINOv2 panels if any run has them
     has_meg = any(
         any("[Fixed Eval (things)] tok_meg_rvq0_loss" in r for r in rows)
         for rows in runs.values()
     )
     if has_meg:
         panels.append(("THINGS MEG rvq0", "[Fixed Eval (things)] tok_meg_rvq0_loss"))
+
+    has_dinov2 = any(
+        any("[Fixed Eval (things)] tok_dinov2@224_loss" in r for r in rows)
+        for rows in runs.values()
+    )
+    if has_dinov2:
+        panels.append(("THINGS DINOv2", "[Fixed Eval (things)] tok_dinov2@224_loss"))
 
     ncols = 3
     nrows = (len(panels) + ncols - 1) // ncols
@@ -385,6 +395,7 @@ _TRAIN_EVAL_PANELS = [
     ("MEG avg rvq2",      "[Epoch] tok_meg_avg_rvq2_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq2_loss"),
     ("MEG avg rvq3",      "[Epoch] tok_meg_avg_rvq3_loss",  "[Fixed Eval (things)] tok_meg_avg_rvq3_loss"),
     ("EEG",               "[Epoch] tok_eeg_loss",           "[Fixed Eval (things)] tok_eeg_loss"),
+    ("DINOv2",            "[Epoch] tok_dinov2@224_loss",    "[Fixed Eval (things)] tok_dinov2@224_loss"),
 ]
 
 

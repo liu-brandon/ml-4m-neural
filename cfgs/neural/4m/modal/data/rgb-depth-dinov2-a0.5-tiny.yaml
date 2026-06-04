@@ -1,0 +1,58 @@
+train:
+  datasets:
+    cc12m:
+      type: multimodal
+
+      in_domains: tok_rgb@224-tok_depth@224
+      out_domains: tok_rgb@224-tok_depth@224
+
+      input_alphas: null
+      target_alphas: null
+      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb2depth-all2all-no-neural.yaml"
+
+      data_path: '/project/data/train/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-00000.tar'
+      use_wds: True # Use webdataset
+      wds_n_repeats: 1 # Number of repeats for webdataset loader to improve efficiency
+      wds_shuffle_buffer_tar: 1_000 # Webdatasets shuffle buffer after loading tar files
+      wds_shuffle_buffer_repeat: 1_000 # Webdatasets shuffle buffer after repeating samples
+
+      main_augment_domain: rgb@224
+      aligned_captions: False
+      tok_train_aug: True
+
+    things:
+      type: multimodal
+
+      in_domains: tok_rgb@224-tok_depth@224-tok_dinov2@224
+      out_domains: tok_rgb@224-tok_depth@224-tok_dinov2@224
+
+      input_alphas: null
+      target_alphas: null
+      alphas_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/alphas_mixture/rgb-dinov2-bidirectional-all2all.yaml"
+
+      data_path: '/project/data/train/things/[tok_rgb,tok_depth,tok_dinov2@224]/shard_000.tar'
+      use_wds: True # Use webdataset
+      wds_n_repeats: 2 # Number of repeats for webdataset loader to improve efficiency
+      wds_shuffle_buffer_tar: 1_000 # Webdatasets shuffle buffer after loading tar files
+      wds_shuffle_buffer_repeat: 1_000 # Webdatasets shuffle buffer after repeating samples
+
+      main_augment_domain: rgb@224
+      aligned_captions: False
+      tok_train_aug: False
+      modality_name_map:
+        tok_rgb: tok_rgb@224
+        tok_depth: tok_depth@224
+
+  weights: [5.0, 1.0] # Sampling weights for the training datasets
+
+val:
+  datasets:
+    cc12m:
+      use_wds: True
+      data_path: '/project/data/val/cc12m/[tok_rgb@224,tok_depth@224,crop_settings]/shard-{00055..00059}.tar'
+    things:
+      use_wds: True
+      data_path: '/project/data/val/things/[tok_rgb,tok_depth,tok_dinov2@224]/shard_{000..026}.tar'
+      modality_name_map:
+        tok_rgb: tok_rgb@224
+        tok_depth: tok_depth@224

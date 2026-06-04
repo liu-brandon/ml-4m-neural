@@ -78,6 +78,7 @@ def load_things_samples(
     seed: int = 42,
     sample_keys: list[str] | None = None,
     meg_source: str | None = None,
+    dinov2_source: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load tok_rgb and tok_depth numpy arrays from THINGS shard tars.
 
@@ -92,6 +93,9 @@ def load_things_samples(
     If meg_source is set (e.g. 'tok_meg' or 'tok_meg_avg'), MEG tokens are also
     loaded from the corresponding shard and split into per-RVQ-layer (128,) arrays.
     Samples whose MEG array is a sentinel placeholder are skipped.
+
+    If dinov2_source is set (e.g. 'tok_dinov2@224'), DINOv2 tokens are loaded
+    as a (1, 256) int64 array stored in sample['tok_dinov2'].
     """
     rgb_tar   = things_root / "tok_rgb"   / f"shard_{shard_idx:03d}.tar"
     depth_tar = things_root / "tok_depth" / f"shard_{shard_idx:03d}.tar"
@@ -110,9 +114,18 @@ def load_things_samples(
             raise FileNotFoundError(f"MEG shard not found: {meg_tar}")
         meg_samples = _read_modality_tar(meg_tar)
 
+    dinov2_samples: dict[str, np.ndarray] = {}
+    if dinov2_source:
+        dinov2_tar = things_root / dinov2_source / f"shard_{shard_idx:03d}.tar"
+        if not dinov2_tar.exists():
+            raise FileNotFoundError(f"DINOv2 shard not found: {dinov2_tar}")
+        dinov2_samples = _read_modality_tar(dinov2_tar)
+
     common_keys = sorted(set(rgb_samples) & set(depth_samples))
     if meg_source:
         common_keys = sorted(set(common_keys) & set(meg_samples))
+    if dinov2_source:
+        common_keys = sorted(set(common_keys) & set(dinov2_samples))
     if not common_keys:
         raise RuntimeError("No common keys across requested modality shards.")
 
@@ -143,6 +156,8 @@ def load_things_samples(
                 continue
             grid, _ = _MEG_TRANSFORM(arr)   # (128, 4) int32
             entry["meg_rvq"] = [np.ascontiguousarray(grid[:, q]) for q in range(4)]  # list of (128,)
+        if dinov2_source:
+            entry["tok_dinov2"] = dinov2_samples[k].reshape(1, 256).astype(np.int64)  # (1, 256)
         results.append(entry)
 
     return results
@@ -298,6 +313,37 @@ def decode_to_image(
         if hi > lo:
             img = (img - lo) / (hi - lo)           # min-max → [0, 1]
         return img.clip(0.0, 1.0)
+
+
+def decode_dinov2(
+    tokenizer,           # VQVAE (not DiVAE — no diffusion, fast)
+    tokens: torch.Tensor,  # (1, 256) int64
+    image_size: int = 224,
+) -> np.ndarray:
+    """Decode DINOv2 tokens → (224, 224, 3) float32 PCA feature visualization.
+
+    Decodes to (1, 768, 16, 16) feature map, applies 3-component PCA across
+    the spatial dimension, normalises to [0, 1], then upsamples to image_size.
+    """
+    from sklearn.decomposition import PCA
+    from PIL import Image as _Image
+
+    tokens_2d = tokens.reshape(1, 16, 16)
+    with torch.no_grad():
+        feats = tokenizer.decode_tokens(tokens_2d)   # (1, 768, 16, 16)
+    feats = feats.squeeze(0).cpu().float().numpy()   # (768, 16, 16)
+    _, H, W = feats.shape
+    feats_flat = feats.reshape(feats.shape[0], -1).T  # (256, 768)
+
+    pca = PCA(n_components=3)
+    pca_out = pca.fit_transform(feats_flat).reshape(H, W, 3)  # (16, 16, 3)
+    lo, hi = pca_out.min(), pca_out.max()
+    if hi > lo:
+        pca_out = (pca_out - lo) / (hi - lo)
+
+    pca_uint8 = (pca_out.clip(0, 1) * 255).astype(np.uint8)
+    img = _Image.fromarray(pca_uint8).resize((image_size, image_size), _Image.NEAREST)
+    return np.array(img).astype(np.float32) / 255.0
 
 
 # ---------------------------------------------------------------------------

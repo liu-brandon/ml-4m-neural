@@ -47,8 +47,8 @@ import numpy as np
 #     # {"dim": 512, "num_heads": 4, "layers": 3}, # 48 million params
 # ]
 MODEL_CONFIGS = [
-    # {"dim": 512, "num_heads": 8, "layers": 3},
-    {"dim": 128, "num_heads": 2, "layers": 2}, 
+    {"dim": 512, "num_heads": 8, "layers": 3},
+    # {"dim": 128, "num_heads": 2, "layers": 2}, 
     # {"dim": 256, "num_heads": 4, "layers": 3},
     # {"dim": 192, "num_heads": 3, "layers": 2},
     # {"dim": 256, "num_heads": 4, "layers": 2},
@@ -128,6 +128,13 @@ CONDITION_MODEL_CFGS = {
         "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-meg-avg-rvq0.yaml",
         "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-meg-avg-rvq0.yaml",
         "shuffle_neural": True,
+    },
+    # pixel_dinov2: positive control — replace neural with DINOv2 patch tokens (high-quality
+    # visual features, known to correlate with visual cortex responses). If this condition
+    # outperforms rgb_only, the experimental design is validated.
+    "pixel_dinov2": {
+        "2layer": f"{_CFG_BASE}/4m-neural-2e-2d-scaling-dinov2.yaml",
+        "3layer": f"{_CFG_BASE}/4m-neural-3e-3d-scaling-dinov2.yaml",
     },
 }
 

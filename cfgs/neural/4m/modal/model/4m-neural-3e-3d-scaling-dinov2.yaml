@@ -31,7 +31,7 @@ warmup_tokens: .1 # in billions
 batch_size: 512 # overridden per-dim in generate_configs (dim<=256→640, dim=512→256)
 
 # Data
-data_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-meg-avg-rvq0-a0.5.yaml"
+data_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-dinov2-a0.5.yaml"
 # s3_data_endpoint: "/path/to/endpoint" # Change me
 eval_freq: 5
 fixed_eval: True
@@ -43,7 +43,7 @@ output_dir: '/project/output/auto'
 
 # Training quality
 print_freq: 100
-find_unused_params: true
+find_unused_params: false
 clip_grad: 3.0
 fixed_eval_batch_size: 128
 
