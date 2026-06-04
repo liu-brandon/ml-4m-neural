@@ -1,0 +1,22 @@
+# Bidirectional pixel↔MEG_avg + all2all (3 components, equal weighting)
+# Identical structure to rgb-meg-bidirectional-all2all.yaml but for tok_meg_avg_rvq0..3.
+sampling_weights: [0.33, 0.33, 0.33]
+alphas_mixture:
+  tok_rgb@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_depth@224:
+    input_alphas: [1000., 0., 0.5]
+    target_alphas: [0., 0.5, 0.5]
+  tok_meg_avg_rvq0:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_avg_rvq1:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_avg_rvq2:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]
+  tok_meg_avg_rvq3:
+    input_alphas: [0., 1000., 0.5]
+    target_alphas: [0.5, 0., 0.5]

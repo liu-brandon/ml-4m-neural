@@ -1,0 +1,54 @@
+# Config for DDP
+
+# Arch: SwiGLU No Bias
+# Modalities: Mix of rgb2all, all2all, caption/T5-biased2all, and C4 text-only
+# Datasets: Mix of COYO700M, CC12M, and C4
+# To be run on 64 GPUs for batch size = 4096
+run_name: auto
+
+# Input & output
+num_input_tokens: 256
+num_target_tokens: 256
+loss_type: mod
+
+# Architecture
+model: fm_neural_3e_3d_gelu
+patch_size: 16
+input_size: 224
+dtype: bfloat16
+
+# Initialization
+# finetune: '/path/to/4M_checkpoint.pth' # Change me. Initialize 4M-21 training from 4M-7 checkpoint
+
+# Train
+epochs: -1
+total_tokens: 5 # in billions
+opt: adamw
+blr: 0.0001 # this is base_lr = 1e-4, lr = base_lr * batch_size / 256
+min_blr: 0.
+warmup_epochs: -1
+warmup_tokens: .1 # in billions
+batch_size: 512 # overridden per-dim in generate_configs (dim<=256→640, dim=512→256)
+
+# Data
+data_config: "/opt/repo/ml-4m/cfgs/neural/4m/modal/data/rgb-depth-meg-avg-a0.5.yaml"
+# s3_data_endpoint: "/path/to/endpoint" # Change me
+eval_freq: 5
+fixed_eval: True
+epoch_size: 300_000 # Number of samples per "epoch"
+
+# Saving
+save_ckpt_freq: 5
+output_dir: '/project/output/auto'
+
+# Training quality
+print_freq: 100
+find_unused_params: true
+clip_grad: 3.0
+fixed_eval_batch_size: 128
+
+# Wandb
+log_wandb: False # Set to True to log to Weights & Biases
+wandb_project: '4m-train'
+wandb_entity: null # Change if needed
+wandb_run_name: auto
