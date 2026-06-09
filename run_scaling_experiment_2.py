@@ -47,8 +47,8 @@ import numpy as np
 #     # {"dim": 512, "num_heads": 4, "layers": 3}, # 48 million params
 # ]
 MODEL_CONFIGS = [
-    {"dim": 512, "num_heads": 8, "layers": 3},
-    # {"dim": 128, "num_heads": 2, "layers": 2}, 
+    # {"dim": 512, "num_heads": 8, "layers": 3},
+    {"dim": 128, "num_heads": 2, "layers": 2}, 
     # {"dim": 256, "num_heads": 4, "layers": 3},
     # {"dim": 192, "num_heads": 3, "layers": 2},
     # {"dim": 256, "num_heads": 4, "layers": 2},

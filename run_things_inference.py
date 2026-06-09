@@ -36,8 +36,8 @@ sys.path.insert(0, str(_REPO_ROOT / "4m_training" / "lib"))  # neural lib
 import fourm_neural_modalities  # registers tok_meg_* into MODALITY_INFO — must precede FM imports
 import fourm.models.fm           # triggers @register_model decorators for fm_neural_* variants
 
-from neural_trial_transform import MegTrialSampleTransform, is_placeholder
-from neural_constants import MEG_TRIAL_SHAPE
+from neural_trial_transform import MegTrialSampleTransform, EegTrialSampleTransform, is_placeholder
+from neural_constants import MEG_TRIAL_SHAPE, EEG_TRIAL_SHAPE
 
 from fourm.data.modality_info import MODALITY_INFO
 from fourm.models.generate import (
@@ -69,6 +69,7 @@ def _read_modality_tar(path: Path) -> dict[str, np.ndarray]:
 
 
 _MEG_TRANSFORM = MegTrialSampleTransform(training=False)  # always picks trial 0
+_EEG_TRANSFORM = EegTrialSampleTransform(training=False)
 
 
 def load_things_samples(
@@ -79,6 +80,7 @@ def load_things_samples(
     sample_keys: list[str] | None = None,
     meg_source: str | None = None,
     dinov2_source: str | None = None,
+    eeg_source: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load tok_rgb and tok_depth numpy arrays from THINGS shard tars.
 
@@ -96,6 +98,9 @@ def load_things_samples(
 
     If dinov2_source is set (e.g. 'tok_dinov2@224'), DINOv2 tokens are loaded
     as a (1, 256) int64 array stored in sample['tok_dinov2'].
+
+    If eeg_source is set (e.g. 'tok_eeg'), EEG tokens are loaded as a (17,) int32
+    array stored in sample['eeg_tokens']. Sentinel placeholders are skipped.
     """
     rgb_tar   = things_root / "tok_rgb"   / f"shard_{shard_idx:03d}.tar"
     depth_tar = things_root / "tok_depth" / f"shard_{shard_idx:03d}.tar"
@@ -121,11 +126,20 @@ def load_things_samples(
             raise FileNotFoundError(f"DINOv2 shard not found: {dinov2_tar}")
         dinov2_samples = _read_modality_tar(dinov2_tar)
 
+    eeg_samples: dict[str, np.ndarray] = {}
+    if eeg_source:
+        eeg_tar = things_root / eeg_source / f"shard_{shard_idx:03d}.tar"
+        if not eeg_tar.exists():
+            raise FileNotFoundError(f"EEG shard not found: {eeg_tar}")
+        eeg_samples = _read_modality_tar(eeg_tar)
+
     common_keys = sorted(set(rgb_samples) & set(depth_samples))
     if meg_source:
         common_keys = sorted(set(common_keys) & set(meg_samples))
     if dinov2_source:
         common_keys = sorted(set(common_keys) & set(dinov2_samples))
+    if eeg_source:
+        common_keys = sorted(set(common_keys) & set(eeg_samples))
     if not common_keys:
         raise RuntimeError("No common keys across requested modality shards.")
 
@@ -158,6 +172,13 @@ def load_things_samples(
             entry["meg_rvq"] = [np.ascontiguousarray(grid[:, q]) for q in range(4)]  # list of (128,)
         if dinov2_source:
             entry["tok_dinov2"] = dinov2_samples[k].reshape(1, 256).astype(np.int64)  # (1, 256)
+        if eeg_source:
+            arr = eeg_samples[k]
+            if is_placeholder(arr, EEG_TRIAL_SHAPE):
+                print(f"  Skipping key {k}: EEG is a sentinel placeholder.")
+                continue
+            tokens, _ = _EEG_TRANSFORM(arr)    # (17,) int32
+            entry["eeg_tokens"] = np.ascontiguousarray(tokens)
         results.append(entry)
 
     return results
@@ -188,6 +209,30 @@ def add_meg_input(
         mod_dict = init_full_input_modality(mod_dict, modality_info, domain, device)
         added.append(domain)
     return mod_dict, added
+
+
+# ---------------------------------------------------------------------------
+# EEG input helper
+# ---------------------------------------------------------------------------
+
+def add_eeg_input(
+    mod_dict: dict,
+    eeg_tokens: np.ndarray,   # (17,) int32
+    modality_info: dict,
+    device: torch.device,
+) -> tuple[dict, list[str]]:
+    """Add EEG tokens as a full encoder input.
+
+    Returns the updated mod_dict and the list of added domain names ([] if
+    tok_eeg is not in modality_info — handles non-EEG checkpoints gracefully).
+    """
+    domain = "tok_eeg"
+    if domain not in modality_info:
+        return mod_dict, []
+    t = torch.tensor(eeg_tokens, dtype=torch.int64).unsqueeze(0).to(device)  # (1, 17)
+    mod_dict[domain] = {"tensor": t}
+    mod_dict = init_full_input_modality(mod_dict, modality_info, domain, device)
+    return mod_dict, [domain]
 
 
 # ---------------------------------------------------------------------------
